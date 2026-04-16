@@ -39,7 +39,9 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
- SRAM_HandleTypeDef hsram1;
+ I2C_HandleTypeDef hi2c2;
+
+SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
 
@@ -49,12 +51,73 @@
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_FSMC_Init(void);
+static void MX_I2C2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+char str[12];
+
+// The 7-bit address 0x68 shifted left for HAL becomes 0xD0
+#define MPU6050_ADDR 0xD0
+#define PWR_MGMT_1   0x6B
+
+void MPU6050_Init(void) {
+    uint8_t check;
+    uint8_t data;
+
+    // 1. Check if device is present (Who Am I?)
+    HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x75, 1, &check, 1, 100);
+
+    if (check == 0x68) { // 0x68 is the default "Who Am I" value
+        // 2. Wake up the MPU6050 (Write 0 to PWR_MGMT_1)
+        data = 0;
+        HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, PWR_MGMT_1, 1, &data, 1, 100);
+    }
+	/*if (HAL_I2C_IsDeviceReady(&hi2c1, 0xD0, 5, 100) == HAL_OK) {
+	    // The chip is definitely responding at address 0xD0
+	    HAL_I2C_Mem_Read(&hi2c1, 0xD0, 0x75, 1, &check, 1, 100);
+	} else {
+	    // The chip isn't even acknowledging the address
+	}*/
+}
+
+uint8_t Rec_Data[14];
+int16_t Accel_X_RAW, Accel_Y_RAW, Accel_Z_RAW;
+
+void MPU6050_Read_Accel(void) {
+    HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 100);
+
+    // Combine two 8-bit registers into one 16-bit value
+    Accel_X_RAW = (int16_t)(Rec_Data[0] << 8 | Rec_Data[1]);
+    Accel_Y_RAW = (int16_t)(Rec_Data[2] << 8 | Rec_Data[3]);
+    Accel_Z_RAW = (int16_t)(Rec_Data[4] << 8 | Rec_Data[5]);
+}
+
+void refresh_LCD() {
+	LCD_DrawString(80, 0, "X : ");
+	LCD_DrawString(80, 20, "Y : ");
+	LCD_DrawString(80, 40, "Z : ");
+
+	sprintf(str, "%5ld", Accel_X_RAW/2048);
+	LCD_DrawString(120, 0, str);
+	sprintf(str, "%5ld", Accel_Y_RAW/2048);
+	LCD_DrawString(120, 20, str);
+	sprintf(str, "%5ld", Accel_Z_RAW/2048);
+	LCD_DrawString(120, 40, str);
+}
+
+void detect_Hit() {
+	int value = Accel_Z_RAW/2048;
+	// TODO: Problem: Hit up and down also detected, i.e. both are negative value.
+	if (value < -9) {
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+		HAL_Delay(100);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+	}
+}
 
 /* USER CODE END 0 */
 
@@ -87,11 +150,16 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_FSMC_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
   LCD_INIT();
   LCD_Clear(0, 0, 240, 320, BLACK);
-  LCD_DrawChar(0, 0, 'Z');
+
+  MPU6050_Init();
+  MPU6050_Read_Accel();
+
   /* USER CODE END 2 */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -99,6 +167,10 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  MPU6050_Init();
+	  MPU6050_Read_Accel();
+	  refresh_LCD();
+	  detect_Hit();
   }
   /* USER CODE END 3 */
 }
@@ -143,6 +215,40 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 100000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -153,15 +259,26 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PB1 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PD12 */
   GPIO_InitStruct.Pin = GPIO_PIN_12;
