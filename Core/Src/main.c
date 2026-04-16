@@ -89,6 +89,7 @@ int main(void)
   MX_FSMC_Init();
   /* USER CODE BEGIN 2 */
   LCD_INIT();
+  LCD_Clear(0, 0, 240, 320, BLACK);
   LCD_DrawChar(0, 0, 'F');
   /* USER CODE END 2 */
 
