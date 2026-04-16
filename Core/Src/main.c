@@ -90,9 +90,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
   LCD_INIT();
   LCD_Clear(0, 0, 240, 320, BLACK);
-  LCD_DrawChar(0, 0, 'F');
+  LCD_DrawChar(0, 0, 'Z');
   /* USER CODE END 2 */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
