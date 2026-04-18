@@ -9,6 +9,11 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
+-include Middlewares/Third_Party/FatFs/src/option/subdir.mk
+-include Middlewares/Third_Party/FatFs/src/drivers/subdir.mk
+-include Middlewares/Third_Party/FatFs/src/subdir.mk
+-include FATFS/Target/subdir.mk
+-include FATFS/App/subdir.mk
 -include Drivers/STM32F1xx_HAL_Driver/Src/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
@@ -60,8 +65,8 @@ all: main-build
 main-build: STM32-Air-Drumsticks.elf secondary-outputs
 
 # Tool invocations
-STM32-Air-Drumsticks.elf STM32-Air-Drumsticks.map: $(OBJS) $(USER_OBJS) C:\Users\hylambo\Desktop\STM32Projects\STM32-Air-Drumsticks\STM32F103VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "STM32-Air-Drumsticks.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"C:\Users\hylambo\Desktop\STM32Projects\STM32-Air-Drumsticks\STM32F103VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="STM32-Air-Drumsticks.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+STM32-Air-Drumsticks.elf STM32-Air-Drumsticks.map: $(OBJS) $(USER_OBJS) C:\ELEC3300\STM32-Air-Drumsticks\STM32F103VETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "STM32-Air-Drumsticks.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"C:\ELEC3300\STM32-Air-Drumsticks\STM32F103VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="STM32-Air-Drumsticks.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

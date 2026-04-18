@@ -18,10 +18,12 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "lcd.h"
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,6 +33,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define AUDIO_BUF_SIZE 4096  // Total size (Ping + Pong)
+#define HALF_BUF_SIZE (AUDIO_BUF_SIZE / 2)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -39,21 +43,99 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
- I2C_HandleTypeDef hi2c2;
+ DAC_HandleTypeDef hdac;
+DMA_HandleTypeDef hdma_dac_ch1;
+
+I2C_HandleTypeDef hi2c2;
+
+SD_HandleTypeDef hsd;
+
+TIM_HandleTypeDef htim6;
 
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-
+FIL wavFile;
+UINT bytesRead;
+uint16_t audioBuffer[AUDIO_BUF_SIZE];
+volatile uint8_t transferStatus = 0; // 0: Idle, 1: Half Empty, 2: Full Empty
+uint8_t tempBuf[4096];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_FSMC_Init(void);
+static void MX_DMA_Init(void);
 static void MX_I2C2_Init(void);
+static void MX_DAC_Init(void);
+static void MX_SDIO_SD_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
+void PlayWav(char *filename) {
 
+    if (f_open(&wavFile, filename, FA_READ) != FR_OK) return;
+
+    // 1. Skip WAV Header (44 bytes)
+    f_lseek(&wavFile, 44);
+
+    for (int half = 0; half < 2; half++) {
+            f_read(&wavFile, tempBuf, 4096, &bytesRead);
+            uint32_t offset = (half == 0) ? 0 : HALF_BUF_SIZE;
+
+            for (int i = 0; i < HALF_BUF_SIZE; i++) {
+                // Combine two bytes into one 16-bit signed integer
+                int16_t rawSample = (int16_t)((tempBuf[2*i+1] << 8) | tempBuf[2*i]);
+                // Convert to 12-bit unsigned: (raw + 32768) >> 4
+                audioBuffer[offset + i] = (uint16_t)((rawSample + 32768) >> 4);
+            }
+        }
+
+        HAL_TIM_Base_Start(&htim6);
+        HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)audioBuffer, AUDIO_BUF_SIZE, DAC_ALIGN_12B_R);
+
+        /* --- STREAMING LOOP --- */
+        while (1) {
+            if (transferStatus > 0) {
+                uint32_t audio_offset = (transferStatus == 1) ? 0 : HALF_BUF_SIZE;
+                transferStatus = 0; // Reset flag
+
+                // Read 4096 bytes (which equals 2048 samples)
+                if (f_read(&wavFile, tempBuf, 4096, &bytesRead) != FR_OK || bytesRead == 0) {
+                    HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+
+                    HAL_TIM_Base_Stop(&htim6);
+
+                        // 2. Set the DAC to the center point (1.65V) manually
+                        // This prevents the "drop to 0V" pop.
+                        HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 2048);
+                        HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
+
+                    f_close(&wavFile);
+                    break;
+                }
+
+                // Process the bytes into the correct half of the audioBuffer
+                for (int i = 0; i < HALF_BUF_SIZE; i++) {
+                    int16_t rawSample = (int16_t)((tempBuf[2*i+1] << 8) | tempBuf[2*i]);
+                    audioBuffer[audio_offset + i] = (uint16_t)((rawSample + 32768) >> 4);
+                }
+            }
+        }
+}
+
+/* --- DMA Callback Functions --- */
+
+// Called when first half of audioBuffer is played
+void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
+    transferStatus = 1;
+}
+
+// Called when second half of audioBuffer is played
+void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
+    transferStatus = 2;
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -150,14 +232,24 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_FSMC_Init();
+  MX_DMA_Init();
   MX_I2C2_Init();
+  MX_DAC_Init();
+  MX_SDIO_SD_Init();
+  MX_TIM6_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
   LCD_INIT();
   LCD_Clear(0, 0, 240, 320, BLACK);
 
   MPU6050_Init();
   MPU6050_Read_Accel();
+  HAL_Delay(500);
 
+      if (f_mount(&SDFatFS, (TCHAR const*)SDPath, 0) == FR_OK) {
+
+          PlayWav("Tom.wav"); // Ensure your file is named exactly this
+      }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -171,6 +263,15 @@ int main(void)
 	  MPU6050_Read_Accel();
 	  refresh_LCD();
 	  detect_Hit();
+	  if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0)==1){
+	  		  PlayWav("Tom.wav");
+
+	  	  }
+
+	  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13)==1){
+	  		  PlayWav("Overhead.wav");
+	  	}
+
   }
   /* USER CODE END 3 */
 }
@@ -215,6 +316,46 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief DAC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DAC_Init(void)
+{
+
+  /* USER CODE BEGIN DAC_Init 0 */
+
+  /* USER CODE END DAC_Init 0 */
+
+  DAC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN DAC_Init 1 */
+
+  /* USER CODE END DAC_Init 1 */
+
+  /** DAC Initialization
+  */
+  hdac.Instance = DAC;
+  if (HAL_DAC_Init(&hdac) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** DAC channel OUT1 config
+  */
+  sConfig.DAC_Trigger = DAC_TRIGGER_T6_TRGO;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+  if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DAC_Init 2 */
+
+  /* USER CODE END DAC_Init 2 */
+
+}
+
+/**
   * @brief I2C2 Initialization Function
   * @param None
   * @retval None
@@ -249,6 +390,88 @@ static void MX_I2C2_Init(void)
 }
 
 /**
+  * @brief SDIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SDIO_SD_Init(void)
+{
+
+  /* USER CODE BEGIN SDIO_Init 0 */
+
+  /* USER CODE END SDIO_Init 0 */
+
+  /* USER CODE BEGIN SDIO_Init 1 */
+
+  /* USER CODE END SDIO_Init 1 */
+  hsd.Instance = SDIO;
+  hsd.Init.ClockEdge = SDIO_CLOCK_EDGE_RISING;
+  hsd.Init.ClockBypass = SDIO_CLOCK_BYPASS_DISABLE;
+  hsd.Init.ClockPowerSave = SDIO_CLOCK_POWER_SAVE_DISABLE;
+  hsd.Init.BusWide = SDIO_BUS_WIDE_1B;
+  hsd.Init.HardwareFlowControl = SDIO_HARDWARE_FLOW_CONTROL_DISABLE;
+  hsd.Init.ClockDiv = 72;
+  /* USER CODE BEGIN SDIO_Init 2 */
+
+  /* USER CODE END SDIO_Init 2 */
+
+}
+
+/**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 0;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 1632;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Channel3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Channel3_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -259,10 +482,10 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
@@ -272,6 +495,18 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PB1 */
   GPIO_InitStruct.Pin = GPIO_PIN_1;
