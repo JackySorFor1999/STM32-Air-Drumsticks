@@ -247,7 +247,8 @@ bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
 }
 
 // --- New Angle Tracking Variables ---
-float current_yaw = 0.0f;       // The calculated left/right angle
+//float current_yaw = 0.0f;       // The calculated left/right angle
+float filtered_angle = 0;
 float gyro_z_offset = 0.0f;     // Calibration offset to prevent drifting
 uint32_t last_loop_time = 0;    // For calculating dt (delta time)
 
@@ -339,6 +340,7 @@ int main(void)
 
 		// 3. Calculate the Yaw Angle
 		// MPU6050 default gyro sensitivity is 131 LSB per degree/sec
+		/*
 		float gyro_z_rate = ((float)Gyro_Z_RAW - gyro_z_offset) / 131.0f;
 
 		// Add a small "deadband" to ignore tiny vibrations and stop drifting
@@ -347,27 +349,74 @@ int main(void)
 		}
 
 		current_yaw += gyro_z_rate * dt; // Integrate speed to get angle
+		if (current_yaw > 90.0f)
+		    current_yaw = 90.0f;
+
+		if (current_yaw < -90.0f)
+		    current_yaw = -90.0f;*/
 
 		// 4. Check for hits using the advanced filter
-		if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
+		/*if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
 
 			// --- PLAY DIFFERENT SOUNDS BASED ON ANGLE ---
 			if (current_yaw < -30.0f) {
-				PlayDrum("Tom.wav"); // Left side
+				PlayDrum("Tom.wav"); // Right side
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			}
 			else if (current_yaw > 30.0f) {
-				PlayDrum("Snare2.wav"); // Right side
+				PlayDrum("Snare2.wav"); // Left side
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
 			}
 			else {
 				PlayDrum("Overhead.wav"); // Center
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
 			}
 
-			// Blink LED Pin B1
-			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+		}*/
+
+		/* 1. Gyro rate */
+		float gyro_rate =
+		((float)Gyro_X_RAW - gyro_z_offset)/131.0f;
+
+		/* 2. Accelerometer angle */
+		float accel_angle =
+		atan2f((float)Accel_Y_RAW,
+		       (float)Accel_Z_RAW)
+		       *57.2958f;
+
+		/* 3. Complementary filter */
+		filtered_angle=
+		0.98f*(filtered_angle+
+		gyro_rate*dt)
+		+0.02f*accel_angle;
+
+		if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
+			if(filtered_angle < -30)
+			{
+			   PlayDrum("Tom.wav");
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+			}
+
+			else if(filtered_angle > 30)
+			{
+			   PlayDrum("Snare2.wav");
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+			}
+
+			else
+			{
+			   PlayDrum("Overhead.wav");
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
+			}
 		}
+
+
+
 
 		// 5. Non-blocking LED turn-off
 		if (HAL_GetTick() - last_hit_time > 50) {
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 		}
 	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
@@ -636,6 +685,9 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_5, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
@@ -656,8 +708,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB1 */
-  GPIO_InitStruct.Pin = GPIO_PIN_1;
+  /*Configure GPIO pins : PB0 PB1 PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
