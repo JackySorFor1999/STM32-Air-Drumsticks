@@ -258,7 +258,6 @@ void Calibrate_Gyro_Offset(void) {
     for(int i = 0; i < 500; i++) {
         MPU6050_Read_Accel();
         z_sum += Gyro_Z_RAW;
-//        HAL_Delay(2);
     }
 
     gyro_z_offset = (float)z_sum / 500.0f;
