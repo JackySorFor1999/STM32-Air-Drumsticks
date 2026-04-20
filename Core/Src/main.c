@@ -37,8 +37,6 @@
 #define AUDIO_BUF_SIZE 4096  // Total size (Ping + Pong)
 #define HALF_BUF_SIZE (AUDIO_BUF_SIZE / 2)
 
-#define HIT_THRESHOLD 30000
-
 #define COOLDOWN_MS 120
 /* USER CODE END PD */
 
@@ -60,7 +58,7 @@ TIM_HandleTypeDef htim6;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-#define MAX_CHANNELS 4
+#define MAX_CHANNELS 5
 typedef struct {
     FIL file;
     uint8_t active;
@@ -129,78 +127,124 @@ char str[12];
 #define MPU6050_ADDR 0xD0
 #define PWR_MGMT_1   0x6B
 
+#define CONFIG       0x1A
+#define ACCEL_CONFIG 0x1C
+
 void MPU6050_Init(void) {
-    uint8_t check;
     uint8_t data;
+    // ... your existing "Who Am I" check ...
 
-    // 1. Check if device is present (Who Am I?)
-    HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x75, 1, &check, 1, 100);
+    // 1. Wake up
+    data = 0;
+    HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, PWR_MGMT_1, 1, &data, 1, 100);
 
-    if (check == 0x68) { // 0x68 is the default "Who Am I" value
-        // 2. Wake up the MPU6050 (Write 0 to PWR_MGMT_1)
-        data = 0;
-        HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, PWR_MGMT_1, 1, &data, 1, 100);
-    }
-	/*if (HAL_I2C_IsDeviceReady(&hi2c1, 0xD0, 5, 100) == HAL_OK) {
-	    // The chip is definitely responding at address 0xD0
-	    HAL_I2C_Mem_Read(&hi2c1, 0xD0, 0x75, 1, &check, 1, 100);
-	} else {
-	    // The chip isn't even acknowledging the address
-	}*/
+    // 2. Set Accelerometer Range to +/- 8g (important for high-speed hits)
+    // 0x10 sets the FS_SEL bits to 2, which is +/- 8g
+    data = 0x10;
+    HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, ACCEL_CONFIG, 1, &data, 1, 100);
+
+    // 3. Enable Digital Low Pass Filter (DLPF)
+    // Mode 3 (~44Hz bandwidth) is great for air drumming to remove jitter
+    data = 0x03;
+    HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, CONFIG, 1, &data, 1, 100);
 }
 
 uint8_t Rec_Data[14];
 int16_t Accel_X_RAW, Accel_Y_RAW, Accel_Z_RAW;
+int16_t Gyro_X_RAW, Gyro_Y_RAW, Gyro_Z_RAW;
 
 void MPU6050_Read_Accel(void) {
     HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 100);
 
-    // Combine two 8-bit registers into one 16-bit value
+    // Accelerometer Data
     Accel_X_RAW = (int16_t)(Rec_Data[0] << 8 | Rec_Data[1]);
     Accel_Y_RAW = (int16_t)(Rec_Data[2] << 8 | Rec_Data[3]);
     Accel_Z_RAW = (int16_t)(Rec_Data[4] << 8 | Rec_Data[5]);
+
+    // Gyroscope Data (Starts at index 8 after Temperature bytes at 6-7)
+    Gyro_X_RAW  = (int16_t)(Rec_Data[8] << 8 | Rec_Data[9]);
+    Gyro_Y_RAW  = (int16_t)(Rec_Data[10] << 8 | Rec_Data[11]);
+    Gyro_Z_RAW  = (int16_t)(Rec_Data[12] << 8 | Rec_Data[13]);
 }
 
 void refresh_LCD() {
-	LCD_DrawString(80, 0, "X : ");
-	LCD_DrawString(80, 20, "Y : ");
-	LCD_DrawString(80, 40, "Z : ");
+	// Labels for Accelerometer
+	LCD_DrawString(10, 0,  "Accel X: ");
+	LCD_DrawString(10, 20, "Accel Y: ");
+	LCD_DrawString(10, 40, "Accel Z: ");
 
-	sprintf(str, "%5ld", Accel_X_RAW/2048);
+	// Labels for Gyroscope
+	LCD_DrawString(10, 70, "Gyro X:  ");
+	LCD_DrawString(10, 90, "Gyro Y:  ");
+	LCD_DrawString(10, 110, "Gyro Z:  ");
+
+	// Display Accelerometer values
+	// Using %-6d ensures the number is left-aligned and padded with spaces up to 6 chars
+	sprintf(str, "%-6d", Accel_X_RAW);
 	LCD_DrawString(120, 0, str);
-	sprintf(str, "%5ld", Accel_Y_RAW/2048);
+	sprintf(str, "%-6d", Accel_Y_RAW);
 	LCD_DrawString(120, 20, str);
-	sprintf(str, "%5ld", Accel_Z_RAW/2048);
+	sprintf(str, "%-6d", Accel_Z_RAW);
 	LCD_DrawString(120, 40, str);
+
+	// Display Gyroscope values
+	sprintf(str, "%-6d", Gyro_X_RAW);
+	LCD_DrawString(120, 70, str);
+	sprintf(str, "%-6d", Gyro_Y_RAW);
+	LCD_DrawString(120, 90, str);
+	sprintf(str, "%-6d", Gyro_Z_RAW);
+	LCD_DrawString(120, 110, str);
 }
 
-/*void detect_Hit() {
-	int value = Accel_Z_RAW/2048;
-	// TODO: Problem: Hit up and down also detected, i.e. both are negative value.
-	if (value < -9) {
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
-		HAL_Delay(100);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
-	}
-}*/
+float filtered_accel_z = 0;
+float alpha = 0.4f; // Smoothing factor (0.1 = very smooth/slow, 0.9 = raw/fast)
 
-bool DetectDrumHit(int16_t accel_axis) {
+float EMA_Filter(int16_t sample, float last_filtered) {
+    return (alpha * (float)sample) + ((1.0f - alpha) * last_filtered);
+}
+
+typedef enum { STATE_IDLE, STATE_TRIGGERED, STATE_COOLDOWN } HitState;
+HitState currentState = STATE_IDLE;
+
+#define HIT_THRESHOLD_HIGH 18000  // Spike needed to trigger
+#define HIT_THRESHOLD_LOW  10000  // Must fall below this to "reset"
+#define GYRO_HIT_MIN       3000   // Must be rotating "down" significantly
+
+bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
     uint32_t current_time = HAL_GetTick();
+    bool hit = false;
 
-    // Check if we are still in the cooldown period to prevent double-triggering
-    if ((current_time - last_hit_time) < COOLDOWN_MS) {
-        return false;
+    // Filter the raw acceleration
+    filtered_accel_z = EMA_Filter(accel_z, filtered_accel_z);
+
+    switch (currentState) {
+        case STATE_IDLE:
+            // Check for acceleration spike AND downward rotation direction
+            // We use > 0 for gyro_x assuming positive is the "flick down" rotation
+            if (filtered_accel_z > HIT_THRESHOLD_HIGH && gyro_x > GYRO_HIT_MIN) {
+                hit = true;
+                last_hit_time = current_time;
+                currentState = STATE_TRIGGERED;
+            }
+            break;
+
+        case STATE_TRIGGERED:
+            // Once triggered, move to cooldown after a fixed minimum time
+            if (current_time - last_hit_time > 40) { // minimum physical hit duration
+                currentState = STATE_COOLDOWN;
+            }
+            break;
+
+        case STATE_COOLDOWN:
+            // Wait until the stick "settles" (falls below low threshold)
+            // OR the cooldown time expires. This prevents double-triggering.
+            if (filtered_accel_z < HIT_THRESHOLD_LOW || (current_time - last_hit_time > COOLDOWN_MS)) {
+                currentState = STATE_IDLE;
+            }
+            break;
     }
-
-    // Check for the deceleration spike
-    if (accel_axis > HIT_THRESHOLD) {
-        last_hit_time = current_time; // Reset the timer
-        return true;
-    }
-
-    return false;
+    return hit;
 }
-
 /* USER CODE END 0 */
 
 /**
@@ -242,6 +286,7 @@ int main(void)
   LCD_INIT();
   LCD_Clear(0, 0, 240, 320, BLACK);
 
+
   MPU6050_Init();
   MPU6050_Read_Accel();
   HAL_Delay(500);
@@ -259,20 +304,28 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  MPU6050_Init();
+	  // 1. Read fresh data (ensure Init is NOT in this loop)
 	  MPU6050_Read_Accel();
-	  refresh_LCD();
-//	  detect_Hit();
-	  if (DetectDrumHit(Accel_Z_RAW)) {
+//	  refresh_LCD();
+
+	  // 2. Check for hits using the advanced filter
+	  // We pass Accel_Z_RAW and Gyro_X_RAW (rotation around X-axis for wrist flick)
+	  if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
+		  PlayDrum("Tom.wav");
+
+		  // Blink LED Pin B1 (Reset/Set)
 		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
-		  HAL_Delay(100);
+	  }
+
+	  // 3. Non-blocking LED turn-off
+	  if (HAL_GetTick() - last_hit_time > 50) {
 		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 	  }
 	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
 	  if (PA0_previous == 0 && PA0_current == 1) PlayDrum("Tom.wav");
-	  if (PC13_previous == 0 && PC13_current == 1) PlayDrum("Overhead.wav");
+	  if (PC13_previous == 0 && PC13_current == 1) PlayDrum("Song2.wav");
 
 	  PA0_previous = PA0_current;
 	  PC13_previous = PC13_current;
