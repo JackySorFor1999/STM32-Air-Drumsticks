@@ -245,6 +245,25 @@ bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
     }
     return hit;
 }
+
+// --- New Angle Tracking Variables ---
+float current_yaw = 0.0f;       // The calculated left/right angle
+float gyro_z_offset = 0.0f;     // Calibration offset to prevent drifting
+uint32_t last_loop_time = 0;    // For calculating dt (delta time)
+
+void Calibrate_Gyro_Offset(void) {
+    int32_t z_sum = 0;
+    LCD_DrawString(10, 140, "Calibrating Gyro..."); // Optional LCD feedback
+
+    for(int i = 0; i < 500; i++) {
+        MPU6050_Read_Accel();
+        z_sum += Gyro_Z_RAW;
+//        HAL_Delay(2);
+    }
+
+    gyro_z_offset = (float)z_sum / 500.0f;
+    LCD_DrawString(10, 140, "Calibration Done!  ");
+}
 /* USER CODE END 0 */
 
 /**
@@ -291,10 +310,17 @@ int main(void)
   MPU6050_Read_Accel();
   HAL_Delay(500);
 
-      if (f_mount(&SDFatFS, (TCHAR const*)SDPath, 0) == FR_OK) {
+  // Call calibration here!
+	Calibrate_Gyro_Offset();
 
-    	  PlayDrum("Tom.wav"); //For testing
-      }
+	// Initialize our timer
+	last_loop_time = HAL_GetTick();
+
+	HAL_Delay(500);
+
+	if (f_mount(&SDFatFS, (TCHAR const*)SDPath, 0) == FR_OK) {
+		PlayDrum("Tom.wav"); // Optional: Play sound to indicate ready
+	}
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -304,28 +330,52 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  // 1. Read fresh data (ensure Init is NOT in this loop)
-	  MPU6050_Read_Accel();
-//	  refresh_LCD();
+	  // 1. Calculate time elapsed since last loop (dt)
+		uint32_t current_time = HAL_GetTick();
+		float dt = (current_time - last_loop_time) / 1000.0f; // Convert ms to seconds
+		last_loop_time = current_time;
 
-	  // 2. Check for hits using the advanced filter
-	  // We pass Accel_Z_RAW and Gyro_X_RAW (rotation around X-axis for wrist flick)
-	  if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
-		  PlayDrum("Tom.wav");
+		// 2. Read fresh data
+		MPU6050_Read_Accel();
 
-		  // Blink LED Pin B1 (Reset/Set)
-		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
-	  }
+		// 3. Calculate the Yaw Angle
+		// MPU6050 default gyro sensitivity is 131 LSB per degree/sec
+		float gyro_z_rate = ((float)Gyro_Z_RAW - gyro_z_offset) / 131.0f;
 
-	  // 3. Non-blocking LED turn-off
-	  if (HAL_GetTick() - last_hit_time > 50) {
-		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
-	  }
+		// Add a small "deadband" to ignore tiny vibrations and stop drifting
+		if (gyro_z_rate > -1.0f && gyro_z_rate < 1.0f) {
+			gyro_z_rate = 0.0f;
+		}
+
+		current_yaw += gyro_z_rate * dt; // Integrate speed to get angle
+
+		// 4. Check for hits using the advanced filter
+		if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
+
+			// --- PLAY DIFFERENT SOUNDS BASED ON ANGLE ---
+			if (current_yaw < -30.0f) {
+				PlayDrum("Tom.wav"); // Left side
+			}
+			else if (current_yaw > 30.0f) {
+				PlayDrum("Snare2.wav"); // Right side
+			}
+			else {
+				PlayDrum("Overhead.wav"); // Center
+			}
+
+			// Blink LED Pin B1
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+		}
+
+		// 5. Non-blocking LED turn-off
+		if (HAL_GetTick() - last_hit_time > 50) {
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+		}
 	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
 	  if (PA0_previous == 0 && PA0_current == 1) PlayDrum("Tom.wav");
-	  if (PC13_previous == 0 && PC13_current == 1) PlayDrum("Song2.wav");
+	  if (PC13_previous == 0 && PC13_current == 1) PlayDrum("Tom2.wav");
 
 	  PA0_previous = PA0_current;
 	  PC13_previous = PC13_current;
