@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "lcd.h"
 #include "stdio.h"
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -35,6 +36,10 @@
 /* USER CODE BEGIN PD */
 #define AUDIO_BUF_SIZE 4096  // Total size (Ping + Pong)
 #define HALF_BUF_SIZE (AUDIO_BUF_SIZE / 2)
+
+#define HIT_THRESHOLD 30000
+
+#define COOLDOWN_MS 120
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -70,6 +75,8 @@ volatile uint8_t transferStatus = 0;
 
 int PA0_previous = 0, PC13_previous = 0;
 int PA0_current, PC13_current;
+
+uint32_t last_hit_time = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -110,7 +117,7 @@ void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
 // Called when second half of audioBuffer is played
 void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
     transferStatus = 2;
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+    // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
 }
 /* USER CODE END PFP */
 
@@ -167,7 +174,7 @@ void refresh_LCD() {
 	LCD_DrawString(120, 40, str);
 }
 
-void detect_Hit() {
+/*void detect_Hit() {
 	int value = Accel_Z_RAW/2048;
 	// TODO: Problem: Hit up and down also detected, i.e. both are negative value.
 	if (value < -9) {
@@ -175,6 +182,23 @@ void detect_Hit() {
 		HAL_Delay(100);
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 	}
+}*/
+
+bool DetectDrumHit(int16_t accel_axis) {
+    uint32_t current_time = HAL_GetTick();
+
+    // Check if we are still in the cooldown period to prevent double-triggering
+    if ((current_time - last_hit_time) < COOLDOWN_MS) {
+        return false;
+    }
+
+    // Check for the deceleration spike
+    if (accel_axis > HIT_THRESHOLD) {
+        last_hit_time = current_time; // Reset the timer
+        return true;
+    }
+
+    return false;
 }
 
 /* USER CODE END 0 */
@@ -238,7 +262,12 @@ int main(void)
 	  MPU6050_Init();
 	  MPU6050_Read_Accel();
 	  refresh_LCD();
-	  detect_Hit();
+//	  detect_Hit();
+	  if (DetectDrumHit(Accel_Z_RAW)) {
+		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+		  HAL_Delay(100);
+		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+	  }
 	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
