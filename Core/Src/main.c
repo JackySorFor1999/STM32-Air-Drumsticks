@@ -196,6 +196,8 @@ void refresh_LCD() {
 	LCD_DrawString(120, 110, str);
 }
 
+// Detect hit
+
 float filtered_accel_z = 0;
 float alpha = 0.4f; // Smoothing factor (0.1 = very smooth/slow, 0.9 = raw/fast)
 
@@ -206,16 +208,17 @@ float EMA_Filter(int16_t sample, float last_filtered) {
 typedef enum { STATE_IDLE, STATE_TRIGGERED, STATE_COOLDOWN } HitState;
 HitState currentState = STATE_IDLE;
 
-#define HIT_THRESHOLD_HIGH 18000  // Spike needed to trigger
-#define HIT_THRESHOLD_LOW  10000  // Must fall below this to "reset"
-#define GYRO_HIT_MIN       3000   // Must be rotating "down" significantly
+#define HIT_THRESHOLD_HIGH 14000  // Spike needed to trigger
+#define HIT_THRESHOLD_LOW  8000  // Must fall below this to "reset"
+#define GYRO_HIT_MIN       2000   // Must be rotating "down" significantly
 
 bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
     uint32_t current_time = HAL_GetTick();
     bool hit = false;
 
     // Filter the raw acceleration
-    filtered_accel_z = EMA_Filter(accel_z, filtered_accel_z);
+//    filtered_accel_z = EMA_Filter(accel_z, filtered_accel_z);
+    filtered_accel_z = accel_z;			// Don't use filter, it mixes up the drum hit area (maybe because of low process speed)
 
     switch (currentState) {
         case STATE_IDLE:
@@ -246,14 +249,14 @@ bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
     return hit;
 }
 
-// --- New Angle Tracking Variables ---
-//float current_yaw = 0.0f;       // The calculated left/right angle
-float filtered_angle = 0;
+// Angle Tracking Variables
+float filtered_angle = 0.0f;
 
 uint32_t last_loop_time = 0;    // For calculating dt (delta time)
 
 float gyro_x_offset = 0.0f;
 float gyro_z_offset = 0.0f;
+float strike_angle = 0.0f;
 
 void Calibrate_Gyro_Offset(void) {
     int32_t x_sum = 0;
@@ -345,42 +348,6 @@ int main(void)
 		// 2. Read fresh data
 		MPU6050_Read_Accel();
 
-		// 3. Calculate the Yaw Angle
-		// MPU6050 default gyro sensitivity is 131 LSB per degree/sec
-		/*
-		float gyro_z_rate = ((float)Gyro_Z_RAW - gyro_z_offset) / 131.0f;
-
-		// Add a small "deadband" to ignore tiny vibrations and stop drifting
-		if (gyro_z_rate > -1.0f && gyro_z_rate < 1.0f) {
-			gyro_z_rate = 0.0f;
-		}
-
-		current_yaw += gyro_z_rate * dt; // Integrate speed to get angle
-		if (current_yaw > 90.0f)
-		    current_yaw = 90.0f;
-
-		if (current_yaw < -90.0f)
-		    current_yaw = -90.0f;*/
-
-		// 4. Check for hits using the advanced filter
-		/*if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
-
-			// --- PLAY DIFFERENT SOUNDS BASED ON ANGLE ---
-			if (current_yaw < -30.0f) {
-				PlayDrum("Tom.wav"); // Right side
-				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
-			}
-			else if (current_yaw > 30.0f) {
-				PlayDrum("Snare2.wav"); // Left side
-				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
-			}
-			else {
-				PlayDrum("Overhead.wav"); // Center
-				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
-			}
-
-		}*/
-
 		/* 1. Gyro rate */
 		float gyro_rate =
 		((float)Gyro_X_RAW - gyro_x_offset)/131.0f;
@@ -390,21 +357,36 @@ int main(void)
 		atan2f((float)Accel_Y_RAW,
 		       (float)Accel_Z_RAW)
 		       *57.2958f;
+		float accel_mag = sqrtf((float)Accel_X_RAW * Accel_X_RAW
+				+ (float)Accel_Y_RAW * Accel_Y_RAW
+				+ Accel_Z_RAW * Accel_Z_RAW);
 
 		/* 3. Complementary filter */
-		filtered_angle=
-		0.98f*(filtered_angle+
-		gyro_rate*dt)
-		+0.02f*accel_angle;
+//		filtered_angle=
+//		0.98f*(filtered_angle+
+//		gyro_rate*dt)
+//		+0.02f*accel_angle;
+
+		// Only trust accelerometer when it looks like gravity, not impact.
+		if (accel_mag > 3000.0f && accel_mag < 5500.0f) {
+			filtered_angle = (0.98f * (filtered_angle + gyro_rate * dt) + 0.02f * accel_angle);
+		} else {
+			filtered_angle = filtered_angle + gyro_rate * dt;
+		}
+
+		if (filtered_angle > 90.0f) filtered_angle = 90.0f;
+		if (filtered_angle < -90.0f) filtered_angle = -90.0f;
 
 		if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
-			if(filtered_angle < -45)
+			strike_angle = filtered_angle;
+
+			if(strike_angle < -35.0f)
 			{
 			   PlayDrum("Tom.wav");
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			}
 
-			else if(filtered_angle > 45)
+			else if(strike_angle > 35.0f)
 			{
 			   PlayDrum("Snare2.wav");
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
@@ -415,7 +397,6 @@ int main(void)
 			   PlayDrum("Overhead.wav");
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
 			}
-			filtered_angle *= 0.4f;
 		}
 
 
