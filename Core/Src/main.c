@@ -249,18 +249,25 @@ bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
 // --- New Angle Tracking Variables ---
 //float current_yaw = 0.0f;       // The calculated left/right angle
 float filtered_angle = 0;
-float gyro_z_offset = 0.0f;     // Calibration offset to prevent drifting
+
 uint32_t last_loop_time = 0;    // For calculating dt (delta time)
 
+float gyro_x_offset = 0.0f;
+float gyro_z_offset = 0.0f;
+
 void Calibrate_Gyro_Offset(void) {
+    int32_t x_sum = 0;
     int32_t z_sum = 0;
-    LCD_DrawString(10, 140, "Calibrating Gyro..."); // Optional LCD feedback
+    LCD_DrawString(10, 140, "Calibrating Gyro...");
 
     for(int i = 0; i < 500; i++) {
         MPU6050_Read_Accel();
+        x_sum += Gyro_X_RAW;
         z_sum += Gyro_Z_RAW;
+        HAL_Delay(2); // Good practice to let fresh data arrive
     }
 
+    gyro_x_offset = (float)x_sum / 500.0f;
     gyro_z_offset = (float)z_sum / 500.0f;
     LCD_DrawString(10, 140, "Calibration Done!  ");
 }
@@ -376,7 +383,7 @@ int main(void)
 
 		/* 1. Gyro rate */
 		float gyro_rate =
-		((float)Gyro_X_RAW - gyro_z_offset)/131.0f;
+		((float)Gyro_X_RAW - gyro_x_offset)/131.0f;
 
 		/* 2. Accelerometer angle */
 		float accel_angle =
@@ -391,13 +398,13 @@ int main(void)
 		+0.02f*accel_angle;
 
 		if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
-			if(filtered_angle < -30)
+			if(filtered_angle < -45)
 			{
 			   PlayDrum("Tom.wav");
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			}
 
-			else if(filtered_angle > 30)
+			else if(filtered_angle > 45)
 			{
 			   PlayDrum("Snare2.wav");
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
@@ -408,6 +415,7 @@ int main(void)
 			   PlayDrum("Overhead.wav");
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
 			}
+			filtered_angle *= 0.4f;
 		}
 
 
