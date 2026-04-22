@@ -58,15 +58,25 @@ TIM_HandleTypeDef htim6;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-#define MAX_CHANNELS 5
+
+#define MAX_DRUM_CHANNELS 3 // Tom, Snare, Overhead
+#define SONG_CHANNEL      3 // Channel index 3 is reserved for the song
+#define TOTAL_CHANNELS    4
+
 typedef struct {
-    FIL file;
+    FIL *fileHandle;
     uint8_t active;
     uint8_t tempBuf[4096];
-    UINT bytesRead;
+    uint8_t rewind;
 } AudioChannel;
 
-AudioChannel channels[MAX_CHANNELS];
+AudioChannel channels[TOTAL_CHANNELS];
+
+// Persistent handles for drums
+FIL wavTom, wavSnare, wavOverhead;
+// Dynamic handle for the song
+FIL wavSong;
+
 
 uint16_t audioBuffer[AUDIO_BUF_SIZE];
 volatile uint8_t transferStatus = 0;
@@ -87,24 +97,42 @@ static void MX_DAC_Init(void);
 static void MX_SDIO_SD_Init(void);
 static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
-void PlayDrum(char *filename) {
-    for (int i = 0; i < MAX_CHANNELS; i++) {
-        if (!channels[i].active) {
-            if (f_open(&channels[i].file, filename, FA_READ) == FR_OK) {
-                f_lseek(&channels[i].file, 44); // Skip header
-                channels[i].active = 1;
 
-                // If DAC isn't running yet, start it
-                if (HAL_DAC_GetState(&hdac) != HAL_DAC_STATE_BUSY) {
-                    HAL_TIM_Base_Start(&htim6);
-                    HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)audioBuffer, AUDIO_BUF_SIZE, DAC_ALIGN_12B_R);
-                }
-            }
-            return; // Found a slot, exit function
-        }
+void PlayDrum(FIL *wavFile, int channelIdx) {
+    // Reset file pointer to skip WAV header (44 bytes)
+    //f_lseek(wavFile, 44);
+
+    channels[channelIdx].fileHandle = wavFile;
+    channels[channelIdx].active = 1;
+    channels[channelIdx].rewind = 1;
+
+    // Start DAC if it's not already running
+    if (HAL_DAC_GetState(&hdac) != HAL_DAC_STATE_BUSY) {
+        HAL_TIM_Base_Start(&htim6);
+        HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)audioBuffer, AUDIO_BUF_SIZE, DAC_ALIGN_12B_R);
     }
 }
 
+void PlaySong(char *filename) {
+    // 1. Close the previous song if it was playing
+    if (channels[SONG_CHANNEL].active) {
+        channels[SONG_CHANNEL].active = 0;
+        f_close(&wavSong);
+    }
+
+    // 2. Open the new song file
+    if (f_open(&wavSong, filename, FA_READ) == FR_OK) {
+        f_lseek(&wavSong, 44); // Skip header
+        channels[SONG_CHANNEL].fileHandle = &wavSong;
+        channels[SONG_CHANNEL].active = 1;
+
+        // Ensure DAC is running
+        if (HAL_DAC_GetState(&hdac) != HAL_DAC_STATE_BUSY) {
+            HAL_TIM_Base_Start(&htim6);
+            HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)audioBuffer, AUDIO_BUF_SIZE, DAC_ALIGN_12B_R);
+        }
+    }
+}
 /* --- DMA Callback Functions --- */
 
 // Called when first half of audioBuffer is played
@@ -326,11 +354,17 @@ int main(void)
 	// Initialize our timer
 	last_loop_time = HAL_GetTick();
 
+	if (f_mount(&SDFatFS, (TCHAR const*)SDPath, 1) == FR_OK) {
+	    // Pre-open drum files so they are ready for instant access
+	    f_open(&wavTom, "Tom.wav", FA_READ);
+	    f_open(&wavSnare, "Snare.wav", FA_READ);
+	    f_open(&wavOverhead, "Overhead.wav", FA_READ);
+
+	    PlayDrum(&wavTom, 0);
+	}
+
 	HAL_Delay(500);
 
-	if (f_mount(&SDFatFS, (TCHAR const*)SDPath, 0) == FR_OK) {
-		PlayDrum("Tom.wav"); // Optional: Play sound to indicate ready
-	}
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -382,19 +416,19 @@ int main(void)
 
 			if(strike_angle < -35.0f)
 			{
-			   PlayDrum("Tom.wav");
+				PlayDrum(&wavOverhead, 2);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			}
 
 			else if(strike_angle > 35.0f)
 			{
-			   PlayDrum("Snare2.wav");
+				PlayDrum(&wavSnare, 1);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
 			}
 
 			else
 			{
-			   PlayDrum("Overhead.wav");
+				PlayDrum(&wavTom, 0);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
 			}
 		}
@@ -411,54 +445,62 @@ int main(void)
 	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
-	  if (PA0_previous == 0 && PA0_current == 1) PlayDrum("Tom.wav");
-	  if (PC13_previous == 0 && PC13_current == 1) PlayDrum("Tom2.wav");
+	  if (PA0_previous == 0 && PA0_current == 1) PlaySong("midnight.wav");
+	  if (PC13_previous == 0 && PC13_current == 1) PlaySong("Song.wav");
 
 	  PA0_previous = PA0_current;
 	  PC13_previous = PC13_current;
 
 	  	      // 2. Audio Mixing
+
 	  if (transferStatus > 0) {
-	  	          uint32_t offset = (transferStatus == 1) ? 0 : HALF_BUF_SIZE;
-	  	          transferStatus = 0;
+	      uint32_t offset = (transferStatus == 1) ? 0 : HALF_BUF_SIZE;
+	      transferStatus = 0;
 
-	  	          // Create a temporary signed 32-bit mixing buffer
-	  	          int32_t mixedSamples[HALF_BUF_SIZE] = {0};
-	  	          uint8_t anyChannelActive = 0;
+	      int32_t mixedSamples[HALF_BUF_SIZE] = {0};
+	      uint8_t anyChannelActive = 0;
 
-	  	          for (int ch = 0; ch < MAX_CHANNELS; ch++) {
-	  	              if (channels[ch].active) {
-	  	                  anyChannelActive = 1;
-	  	                  if (f_read(&channels[ch].file, channels[ch].tempBuf, 4096, &channels[ch].bytesRead) != FR_OK || channels[ch].bytesRead == 0) {
-	  	                      channels[ch].active = 0;
-	  	                      f_close(&channels[ch].file);
-	  	                  } else {
-	  	                      // Add this channel's samples to the mix
-	  	                      for (int i = 0; i < HALF_BUF_SIZE; i++) {
-	  	                          int16_t sample = (int16_t)((channels[ch].tempBuf[2*i+1] << 8) | channels[ch].tempBuf[2*i]);
-	  	                          mixedSamples[i] += sample;
-	  	                      }
-	  	                  }
-	  	              }
-	  	          }
+	      for (int ch = 0; ch < TOTAL_CHANNELS; ch++) {
+	          if (channels[ch].active) {
+	              anyChannelActive = 1;
+	              UINT br;
+	              if (channels[ch].rewind) {
+	                              f_lseek(channels[ch].fileHandle, 44);
+	                              channels[ch].rewind = 0;
+	                   }
+	              // 1. Read the WHOLE HALF_BUF_SIZE at once from the file handle
+	              // We use tempBuf for drums or a local buffer for the song
+	              if (f_read(channels[ch].fileHandle, channels[ch].tempBuf, HALF_BUF_SIZE * 2, &br) != FR_OK || br == 0) {
+	                  channels[ch].active = 0;
+	                  // If it's the song channel, we close it, otherwise leave drums open
+	                  if (ch == SONG_CHANNEL) f_close(&wavSong);
+	              } else {
+	                  // 2. Mix into the 32-bit buffer
+	                  int16_t *pSamples = (int16_t*)channels[ch].tempBuf;
+	                  for (int i = 0; i < HALF_BUF_SIZE; i++) {
+	                      mixedSamples[i] += pSamples[i];
+	                  }
+	              }
+	          }
+	      }
 
-	  	          // Convert the final mix to 12-bit Unsigned for the DAC
-	  	          for (int i = 0; i < HALF_BUF_SIZE; i++) {
-	  	              // Hard Clipping (Prevent distortion if too loud)
-	  	              if (mixedSamples[i] > 32767) mixedSamples[i] = 32767;
-	  	              if (mixedSamples[i] < -32768) mixedSamples[i] = -32768;
+	      // 3. Final Conversion and Clipping
+	      for (int i = 0; i < HALF_BUF_SIZE; i++) {
+	          if (mixedSamples[i] > 32767) mixedSamples[i] = 32767;
+	          else if (mixedSamples[i] < -32768) mixedSamples[i] = -32768;
 
-	  	              audioBuffer[offset + i] = (uint16_t)((mixedSamples[i] + 32768) >> 4);
-	  	          }
+	          // Convert to 12-bit unsigned for DAC
+	          audioBuffer[offset + i] = (uint16_t)((mixedSamples[i] + 32768) >> 4);
+	      }
 
-	  	          // Optimization: If no channels are active, stop the DAC to save power/noise
-	  	          if (!anyChannelActive) {
-	  	              HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
-	  	              HAL_TIM_Base_Stop(&htim6);
-	  	              HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 2048); // Stay at mid-point
-	  	          }
-	  	      }
-	  	  }
+	      if (!anyChannelActive) {
+	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+	          HAL_TIM_Base_Stop(&htim6);
+	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 2048);
+	      }
+	  }
+  }
+
   /* USER CODE END 3 */
 }
 
