@@ -37,13 +37,13 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  16 .debug_macro  0001d169  00000000  00000000  0003d7f0  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .debug_line   0001b1f6  00000000  00000000  0005a959  2**0
+ 17 .debug_line   0001b1ff  00000000  00000000  0005a959  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 18 .debug_str    000a50c0  00000000  00000000  00075b4f  2**0
+ 18 .debug_str    000a50c0  00000000  00000000  00075b58  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .comment      00000050  00000000  00000000  0011ac0f  2**0
+ 19 .comment      00000050  00000000  00000000  0011ac18  2**0
                   CONTENTS, READONLY
- 20 .debug_frame  00006308  00000000  00000000  0011ac60  2**2
+ 20 .debug_frame  00006308  00000000  00000000  0011ac68  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -1588,7 +1588,7 @@ void PlaySong(char *filename) {
  8000dce:	f503 5340 	add.w	r3, r3, #12288	; 0x3000
  8000dd2:	7f1b      	ldrb	r3, [r3, #28]
  8000dd4:	2b00      	cmp	r3, #0
- 8000dd6:	d007      	beq.n	8000de8 <PlaySong+0x24>
+ 8000dd6:	d008      	beq.n	8000dea <PlaySong+0x26>
         channels[SONG_CHANNEL].active = 0;
  8000dd8:	4b1a      	ldr	r3, [pc, #104]	; (8000e44 <PlaySong+0x80>)
  8000dda:	f503 5340 	add.w	r3, r3, #12288	; 0x3000
@@ -1597,59 +1597,58 @@ void PlaySong(char *filename) {
         f_close(&wavSong);
  8000de2:	4819      	ldr	r0, [pc, #100]	; (8000e48 <PlaySong+0x84>)
  8000de4:	f009 f884 	bl	8009ef0 <f_close>
-    }
-
-    // 2. Open the new song file
-    if (f_open(&wavSong, filename, FA_READ) == FR_OK) {
- 8000de8:	2201      	movs	r2, #1
- 8000dea:	6879      	ldr	r1, [r7, #4]
- 8000dec:	4816      	ldr	r0, [pc, #88]	; (8000e48 <PlaySong+0x84>)
- 8000dee:	f008 fbe1 	bl	80095b4 <f_open>
- 8000df2:	4603      	mov	r3, r0
- 8000df4:	2b00      	cmp	r3, #0
- 8000df6:	d120      	bne.n	8000e3a <PlaySong+0x76>
-        f_lseek(&wavSong, 44); // Skip header
- 8000df8:	212c      	movs	r1, #44	; 0x2c
- 8000dfa:	4813      	ldr	r0, [pc, #76]	; (8000e48 <PlaySong+0x84>)
- 8000dfc:	f009 f8a0 	bl	8009f40 <f_lseek>
-        channels[SONG_CHANNEL].fileHandle = &wavSong;
- 8000e00:	4b10      	ldr	r3, [pc, #64]	; (8000e44 <PlaySong+0x80>)
- 8000e02:	f503 5340 	add.w	r3, r3, #12288	; 0x3000
- 8000e06:	461a      	mov	r2, r3
- 8000e08:	4b0f      	ldr	r3, [pc, #60]	; (8000e48 <PlaySong+0x84>)
- 8000e0a:	6193      	str	r3, [r2, #24]
-        channels[SONG_CHANNEL].active = 1;
- 8000e0c:	4b0d      	ldr	r3, [pc, #52]	; (8000e44 <PlaySong+0x80>)
- 8000e0e:	f503 5340 	add.w	r3, r3, #12288	; 0x3000
- 8000e12:	2201      	movs	r2, #1
- 8000e14:	771a      	strb	r2, [r3, #28]
-
-        // Ensure DAC is running
         if (HAL_DAC_GetState(&hdac) != HAL_DAC_STATE_BUSY) {
- 8000e16:	480d      	ldr	r0, [pc, #52]	; (8000e4c <PlaySong+0x88>)
- 8000e18:	f001 fce7 	bl	80027ea <HAL_DAC_GetState>
- 8000e1c:	4603      	mov	r3, r0
- 8000e1e:	2b02      	cmp	r3, #2
- 8000e20:	d00b      	beq.n	8000e3a <PlaySong+0x76>
             HAL_TIM_Base_Start(&htim6);
- 8000e22:	480b      	ldr	r0, [pc, #44]	; (8000e50 <PlaySong+0x8c>)
- 8000e24:	f005 fc7c 	bl	8006720 <HAL_TIM_Base_Start>
             HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)audioBuffer, AUDIO_BUF_SIZE, DAC_ALIGN_12B_R);
- 8000e28:	2300      	movs	r3, #0
- 8000e2a:	9300      	str	r3, [sp, #0]
- 8000e2c:	f44f 5380 	mov.w	r3, #4096	; 0x1000
- 8000e30:	4a08      	ldr	r2, [pc, #32]	; (8000e54 <PlaySong+0x90>)
- 8000e32:	2100      	movs	r1, #0
- 8000e34:	4805      	ldr	r0, [pc, #20]	; (8000e4c <PlaySong+0x88>)
- 8000e36:	f001 fb69 	bl	800250c <HAL_DAC_Start_DMA>
         }
     }
 }
- 8000e3a:	bf00      	nop
- 8000e3c:	3708      	adds	r7, #8
- 8000e3e:	46bd      	mov	sp, r7
- 8000e40:	bd80      	pop	{r7, pc}
- 8000e42:	bf00      	nop
+ 8000de8:	e028      	b.n	8000e3c <PlaySong+0x78>
+    else if (f_open(&wavSong, filename, FA_READ) == FR_OK) {
+ 8000dea:	2201      	movs	r2, #1
+ 8000dec:	6879      	ldr	r1, [r7, #4]
+ 8000dee:	4816      	ldr	r0, [pc, #88]	; (8000e48 <PlaySong+0x84>)
+ 8000df0:	f008 fbe0 	bl	80095b4 <f_open>
+ 8000df4:	4603      	mov	r3, r0
+ 8000df6:	2b00      	cmp	r3, #0
+ 8000df8:	d120      	bne.n	8000e3c <PlaySong+0x78>
+        f_lseek(&wavSong, 44); // Skip header
+ 8000dfa:	212c      	movs	r1, #44	; 0x2c
+ 8000dfc:	4812      	ldr	r0, [pc, #72]	; (8000e48 <PlaySong+0x84>)
+ 8000dfe:	f009 f89f 	bl	8009f40 <f_lseek>
+        channels[SONG_CHANNEL].fileHandle = &wavSong;
+ 8000e02:	4b10      	ldr	r3, [pc, #64]	; (8000e44 <PlaySong+0x80>)
+ 8000e04:	f503 5340 	add.w	r3, r3, #12288	; 0x3000
+ 8000e08:	461a      	mov	r2, r3
+ 8000e0a:	4b0f      	ldr	r3, [pc, #60]	; (8000e48 <PlaySong+0x84>)
+ 8000e0c:	6193      	str	r3, [r2, #24]
+        channels[SONG_CHANNEL].active = 1;
+ 8000e0e:	4b0d      	ldr	r3, [pc, #52]	; (8000e44 <PlaySong+0x80>)
+ 8000e10:	f503 5340 	add.w	r3, r3, #12288	; 0x3000
+ 8000e14:	2201      	movs	r2, #1
+ 8000e16:	771a      	strb	r2, [r3, #28]
+        if (HAL_DAC_GetState(&hdac) != HAL_DAC_STATE_BUSY) {
+ 8000e18:	480c      	ldr	r0, [pc, #48]	; (8000e4c <PlaySong+0x88>)
+ 8000e1a:	f001 fce6 	bl	80027ea <HAL_DAC_GetState>
+ 8000e1e:	4603      	mov	r3, r0
+ 8000e20:	2b02      	cmp	r3, #2
+ 8000e22:	d00b      	beq.n	8000e3c <PlaySong+0x78>
+            HAL_TIM_Base_Start(&htim6);
+ 8000e24:	480a      	ldr	r0, [pc, #40]	; (8000e50 <PlaySong+0x8c>)
+ 8000e26:	f005 fc7b 	bl	8006720 <HAL_TIM_Base_Start>
+            HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)audioBuffer, AUDIO_BUF_SIZE, DAC_ALIGN_12B_R);
+ 8000e2a:	2300      	movs	r3, #0
+ 8000e2c:	9300      	str	r3, [sp, #0]
+ 8000e2e:	f44f 5380 	mov.w	r3, #4096	; 0x1000
+ 8000e32:	4a08      	ldr	r2, [pc, #32]	; (8000e54 <PlaySong+0x90>)
+ 8000e34:	2100      	movs	r1, #0
+ 8000e36:	4805      	ldr	r0, [pc, #20]	; (8000e4c <PlaySong+0x88>)
+ 8000e38:	f001 fb68 	bl	800250c <HAL_DAC_Start_DMA>
+}
+ 8000e3c:	bf00      	nop
+ 8000e3e:	3708      	adds	r7, #8
+ 8000e40:	46bd      	mov	sp, r7
+ 8000e42:	bd80      	pop	{r7, pc}
  8000e44:	2000024c 	.word	0x2000024c
  8000e48:	200048f0 	.word	0x200048f0
  8000e4c:	2000008c 	.word	0x2000008c

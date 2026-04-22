@@ -121,7 +121,7 @@ void PlaySong(char *filename) {
     }
 
     // 2. Open the new song file
-    if (f_open(&wavSong, filename, FA_READ) == FR_OK) {
+    else if (f_open(&wavSong, filename, FA_READ) == FR_OK) {
         f_lseek(&wavSong, 44); // Skip header
         channels[SONG_CHANNEL].fileHandle = &wavSong;
         channels[SONG_CHANNEL].active = 1;
