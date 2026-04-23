@@ -236,9 +236,9 @@ float EMA_Filter(int16_t sample, float last_filtered) {
 typedef enum { STATE_IDLE, STATE_TRIGGERED, STATE_COOLDOWN } HitState;
 HitState currentState = STATE_IDLE;
 
-#define HIT_THRESHOLD_HIGH 14000  // Spike needed to trigger
+#define HIT_THRESHOLD_HIGH 12000  // Spike needed to trigger
 #define HIT_THRESHOLD_LOW  8000  // Must fall below this to "reset"
-#define GYRO_HIT_MIN       2000   // Must be rotating "down" significantly
+#define GYRO_HIT_MIN       1500   // Must be rotating "down" significantly
 
 bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
     uint32_t current_time = HAL_GetTick();
@@ -291,15 +291,15 @@ void Calibrate_Gyro_Offset(void) {
     int32_t z_sum = 0;
     LCD_DrawString(10, 140, "Calibrating Gyro...");
 
-    for(int i = 0; i < 500; i++) {
+    for(int i = 0; i < 10; i++) {
         MPU6050_Read_Accel();
         x_sum += Gyro_X_RAW;
         z_sum += Gyro_Z_RAW;
         HAL_Delay(2); // Good practice to let fresh data arrive
     }
 
-    gyro_x_offset = (float)x_sum / 500.0f;
-    gyro_z_offset = (float)z_sum / 500.0f;
+    gyro_x_offset = (float)x_sum / 10.0f;
+    gyro_z_offset = (float)z_sum / 10.0f;
     LCD_DrawString(10, 140, "Calibration Done!  ");
 }
 /* USER CODE END 0 */
@@ -374,6 +374,17 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  HAL_StatusTypeDef status;
+	  status = HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
+
+	  if (status != HAL_OK) {
+	      // I2C failed! Reset the peripheral to "unstick" it
+	      HAL_I2C_DeInit(&hi2c2);
+	      HAL_I2C_Init(&hi2c2);
+	      // Optional: Re-run MPU6050_Init() if the sensor itself reset
+	      continue; // Skip this loop iteration
+	  }
+
 	  // 1. Calculate time elapsed since last loop (dt)
 		uint32_t current_time = HAL_GetTick();
 		float dt = (current_time - last_loop_time) / 1000.0f; // Convert ms to seconds
@@ -420,7 +431,7 @@ int main(void)
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			}
 
-			else if(strike_angle > 35.0f)
+			else if(strike_angle > 45.0f)
 			{
 				PlayDrum(&wavSnare, 1);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
