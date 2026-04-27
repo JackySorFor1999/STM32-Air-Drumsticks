@@ -85,6 +85,28 @@ int PA0_previous = 0, PC13_previous = 0;
 int PA0_current, PC13_current;
 
 uint32_t last_hit_time = 0;
+const char* songList[] = {"Mayoiuta", "Midnight", "Haruhikage", "The Young Ones"};
+const char* drumList[] = {"Acoustic Kit", "Chinese Kit", "Electronic"};
+
+#define SONG_COUNT (sizeof(songList) / sizeof(songList[0]))
+#define DRUM_COUNT (sizeof(drumList) / sizeof(drumList[0]))
+#define HOME_COUNT 2
+
+// Page States
+typedef enum { PAGE_HOME, PAGE_SONG, PAGE_DRUM } MenuPage;
+MenuPage currentPage = PAGE_HOME;
+
+// Independent Indices
+uint8_t homeIdx = 0;
+uint8_t songIdx = 0;
+uint8_t drumIdx = 0;
+
+// Current Selections (Indices)
+int activeSongIdx = -1; // -1 means none
+int activeDrumIdx = 0;  // Default to first drum
+
+uint8_t updateDisplay = 1;
+uint32_t lastButtonTime = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -121,7 +143,7 @@ void PlaySong(char *filename) {
     }
 
     // 2. Open the new song file
-    else if (f_open(&wavSong, filename, FA_READ) == FR_OK) {
+    if (f_open(&wavSong, filename, FA_READ) == FR_OK) {
         f_lseek(&wavSong, 44); // Skip header
         channels[SONG_CHANNEL].fileHandle = &wavSong;
         channels[SONG_CHANNEL].active = 1;
@@ -135,15 +157,51 @@ void PlaySong(char *filename) {
 }
 /* --- DMA Callback Functions --- */
 
-// Called when first half of audioBuffer is played
 void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
-    transferStatus = 1;
+    // We are now playing the second half; refill the FIRST half
+    FillAudioBuffer(0);
 }
 
-// Called when second half of audioBuffer is played
 void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
-    transferStatus = 2;
-    // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+    // We are now playing the first half; refill the SECOND half
+    FillAudioBuffer(HALF_BUF_SIZE);
+    //HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1); // Visual heartbeat
+}
+void FillAudioBuffer(uint32_t offset) {
+    int32_t mixedSamples[HALF_BUF_SIZE] = {0};
+    uint8_t anyChannelActive = 0;
+
+    for (int ch = 0; ch < TOTAL_CHANNELS; ch++) {
+        if (channels[ch].active) {
+            anyChannelActive = 1;
+            UINT br;
+
+            if (channels[ch].rewind) {
+                f_lseek(channels[ch].fileHandle, 44);
+                channels[ch].rewind = 0;
+            }
+
+            // Read directly into the temporary buffer
+            if (f_read(channels[ch].fileHandle, channels[ch].tempBuf, HALF_BUF_SIZE * 2, &br) != FR_OK || br == 0) {
+                channels[ch].active = 0;
+                // DO NOT close files inside an interrupt.
+                // Set a flag and close them in the main loop if needed.
+            } else {
+                int16_t *pSamples = (int16_t*)channels[ch].tempBuf;
+                for (int i = 0; i < HALF_BUF_SIZE; i++) {
+                    mixedSamples[i] += pSamples[i];
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < HALF_BUF_SIZE; i++) {
+        // Clipping
+        if (mixedSamples[i] > 32767) mixedSamples[i] = 32767;
+        else if (mixedSamples[i] < -32768) mixedSamples[i] = -32768;
+
+        audioBuffer[offset + i] = (uint16_t)((mixedSamples[i] + 32768) >> 4);
+    }
 }
 /* USER CODE END PFP */
 
@@ -194,7 +252,7 @@ void MPU6050_Read_Accel(void) {
     Gyro_Y_RAW  = (int16_t)(Rec_Data[10] << 8 | Rec_Data[11]);
     Gyro_Z_RAW  = (int16_t)(Rec_Data[12] << 8 | Rec_Data[13]);
 }
-
+/*
 void refresh_LCD() {
 	// Labels for Accelerometer
 	LCD_DrawString(10, 0,  "Accel X: ");
@@ -223,7 +281,7 @@ void refresh_LCD() {
 	sprintf(str, "%-6d", Gyro_Z_RAW);
 	LCD_DrawString(120, 110, str);
 }
-
+*/
 // Detect hit
 
 float filtered_accel_z = 0;
@@ -289,7 +347,7 @@ float strike_angle = 0.0f;
 void Calibrate_Gyro_Offset(void) {
     int32_t x_sum = 0;
     int32_t z_sum = 0;
-    LCD_DrawString(10, 140, "Calibrating Gyro...");
+    LCD_DrawString(10, 140, "Calibrating Gyro...",BLACK);
 
     for(int i = 0; i < 10; i++) {
         MPU6050_Read_Accel();
@@ -300,7 +358,7 @@ void Calibrate_Gyro_Offset(void) {
 
     gyro_x_offset = (float)x_sum / 10.0f;
     gyro_z_offset = (float)z_sum / 10.0f;
-    LCD_DrawString(10, 140, "Calibration Done!  ");
+    LCD_DrawString(10, 140, "Calibration Done!  ",BLACK);
 }
 /* USER CODE END 0 */
 
@@ -341,7 +399,7 @@ int main(void)
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
   LCD_INIT();
-  LCD_Clear(0, 0, 240, 320, BLACK);
+
 
 
   MPU6050_Init();
@@ -453,65 +511,88 @@ int main(void)
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 		}
-	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
-	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+		PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
+			      PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
-	  if (PA0_previous == 0 && PA0_current == 1) PlaySong("midnight.wav");
-	  if (PC13_previous == 0 && PC13_current == 1) PlaySong("Song.wav");
+			      // --- PA0: Scroll Down (Page Specific) ---
+			      if (HAL_GetTick() - lastButtonTime > 250) {
+			      if (PA0_previous == 0 && PA0_current == 1) {
+			          updateDisplay = 1;
+			          switch(currentPage) {
+			              case PAGE_HOME: homeIdx = (homeIdx + 1) % HOME_COUNT; break;
+			              case PAGE_SONG: songIdx = (songIdx + 1) % SONG_COUNT; break;
+			              case PAGE_DRUM: drumIdx = (drumIdx + 1) % DRUM_COUNT; break;
+			          }
+			          lastButtonTime = HAL_GetTick();
+			      }
 
-	  PA0_previous = PA0_current;
-	  PC13_previous = PC13_current;
+			      // --- PC13: Confirm (Page Specific) ---
+			      if (PC13_previous == 0 && PC13_current == 1) {
+			          updateDisplay = 1;
+			          if (currentPage == PAGE_HOME) {
+			              currentPage = (homeIdx == 0) ? PAGE_SONG : PAGE_DRUM;
+			          }
+			          else if (currentPage == PAGE_SONG) {
+			              activeSongIdx = songIdx;
+			              char fileName[20];
+			              sprintf(fileName, "%s.wav", songList[activeSongIdx]);
+			              PlaySong(fileName);
+			              currentPage = PAGE_HOME;
+			          }
+			          else if (currentPage == PAGE_DRUM) {
+			              activeDrumIdx = drumIdx;
+			              /*
+			              switch (activeDrumIdx){
+			              	  case 0: PlayDrum(&wavSnare, 0);
+			              	  	  	  break;
+			              	  case 1: PlayDrum(&wavTanggu,0);
+			              	  	  	  break;
+			              }
+			              */
+			              currentPage = PAGE_HOME;
+			          }
+			          lastButtonTime = HAL_GetTick();
+			      }
+			      }
 
-	  	      // 2. Audio Mixing
+			      PA0_previous = PA0_current;
+			      PC13_previous = PC13_current;
 
-	  if (transferStatus > 0) {
-	      uint32_t offset = (transferStatus == 1) ? 0 : HALF_BUF_SIZE;
-	      transferStatus = 0;
+			      // --- 2. Render Screen ---
+			      if (updateDisplay&& (current_time - last_hit_time > 200)) {
+			          LCD_Clear(0, 0, 240, 250, 0xFFFF);
+			          if (currentPage == PAGE_HOME) {
+			              LCD_DrawString(70, 20, "MAIN MENU", 0x0000);
+			              // Show Status
+			              char buf[30];
+			              sprintf(buf, "Current: %s", (activeSongIdx == -1) ? "None" : songList[activeSongIdx]);
+			              LCD_DrawString(20, 60, buf, 0x07E0); // Green color for status
 
-	      int32_t mixedSamples[HALF_BUF_SIZE] = {0};
-	      uint8_t anyChannelActive = 0;
+			              sprintf(buf, "Drum: %s", drumList[activeDrumIdx]);
+			              LCD_DrawString(20, 80, buf, 0x07E0);
 
-	      for (int ch = 0; ch < TOTAL_CHANNELS; ch++) {
-	          if (channels[ch].active) {
-	              anyChannelActive = 1;
-	              UINT br;
-	              if (channels[ch].rewind) {
-	                              f_lseek(channels[ch].fileHandle, 44);
-	                              channels[ch].rewind = 0;
-	                   }
-	              // 1. Read the WHOLE HALF_BUF_SIZE at once from the file handle
-	              // We use tempBuf for drums or a local buffer for the song
-	              if (f_read(channels[ch].fileHandle, channels[ch].tempBuf, HALF_BUF_SIZE * 2, &br) != FR_OK || br == 0) {
-	                  channels[ch].active = 0;
-	                  // If it's the song channel, we close it, otherwise leave drums open
-	                  if (ch == SONG_CHANNEL) f_close(&wavSong);
-	              } else {
-	                  // 2. Mix into the 32-bit buffer
-	                  int16_t *pSamples = (int16_t*)channels[ch].tempBuf;
-	                  for (int i = 0; i < HALF_BUF_SIZE; i++) {
-	                      mixedSamples[i] += pSamples[i];
-	                  }
-	              }
-	          }
-	      }
 
-	      // 3. Final Conversion and Clipping
-	      for (int i = 0; i < HALF_BUF_SIZE; i++) {
-	          if (mixedSamples[i] > 32767) mixedSamples[i] = 32767;
-	          else if (mixedSamples[i] < -32768) mixedSamples[i] = -32768;
+			              // Menu Options
+			              LCD_DrawString(30, 140, "[ SONG SELECT ]", (homeIdx == 0) ? RED : BLUE);
+			              LCD_DrawString(30, 170, "[ DRUM SELECT ]", (homeIdx == 1) ? RED : BLUE);
+			          }
+			          else if (currentPage == PAGE_SONG) {
+			              LCD_DrawString(70, 20, "SELECT SONG", 0x0000);
+			              for(int i = 0; i < SONG_COUNT; i++) {
+			                  LCD_DrawString(30, 60 + (i * 30), songList[i], (songIdx == i) ? RED : BLUE);
 
-	          // Convert to 12-bit unsigned for DAC
-	          audioBuffer[offset + i] = (uint16_t)((mixedSamples[i] + 32768) >> 4);
-	      }
+			              }
+			          }
+			          else if (currentPage == PAGE_DRUM) {
+			              LCD_DrawString(70, 20, "SELECT DRUM", 0x0000);
+			              for(int i = 0; i < DRUM_COUNT; i++) {
+			                  LCD_DrawString(30, 60 + (i * 30), drumList[i], (drumIdx == i) ? RED : BLUE);
 
-	      if (!anyChannelActive) {
-	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
-	          HAL_TIM_Base_Stop(&htim6);
-	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 2048);
-	      }
-	  }
+			              }
+			          }
+			          updateDisplay = 0;
+			      }
   }
-
   /* USER CODE END 3 */
 }
 
