@@ -49,6 +49,7 @@
  DAC_HandleTypeDef hdac;
 DMA_HandleTypeDef hdma_dac_ch1;
 
+I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
 SD_HandleTypeDef hsd;
@@ -96,6 +97,7 @@ static void MX_I2C2_Init(void);
 static void MX_DAC_Init(void);
 static void MX_SDIO_SD_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 void PlayDrum(FIL *wavFile, int channelIdx) {
@@ -158,7 +160,39 @@ char str[12];
 #define CONFIG       0x1A
 #define ACCEL_CONFIG 0x1C
 
-void MPU6050_Init(void) {
+typedef enum { STATE_IDLE, STATE_TRIGGERED, STATE_COOLDOWN } HitState;
+HitState currentState = STATE_IDLE;
+
+#define HIT_THRESHOLD_HIGH 12000  // Spike needed to trigger
+#define HIT_THRESHOLD_LOW  8000  // Must fall below this to "reset"
+#define GYRO_HIT_MIN       1500   // Must be rotating "down" significantly
+
+typedef struct {
+    I2C_HandleTypeDef *hi2c;
+
+    uint8_t Rec_Data[14];
+
+    int16_t Accel_X_RAW;
+    int16_t Accel_Y_RAW;
+    int16_t Accel_Z_RAW;
+
+    int16_t Gyro_X_RAW;
+    int16_t Gyro_Y_RAW;
+    int16_t Gyro_Z_RAW;
+
+    float gyro_x_offset;
+    float filtered_angle;
+
+    uint32_t last_loop_time;
+    uint32_t last_hit_time;
+
+    HitState state;
+} MPU6050_t;
+
+MPU6050_t mpu1;
+MPU6050_t mpu2;
+
+/*void MPU6050_Init(void) {
     uint8_t data;
     // ... your existing "Who Am I" check ...
 
@@ -175,13 +209,32 @@ void MPU6050_Init(void) {
     // Mode 3 (~44Hz bandwidth) is great for air drumming to remove jitter
     data = 0x03;
     HAL_I2C_Mem_Write(&hi2c2, MPU6050_ADDR, CONFIG, 1, &data, 1, 100);
+}*/
+
+void MPU6050_Init_Device(MPU6050_t *mpu) {
+    uint8_t data;
+
+    // Wake up
+    data = 0;
+    HAL_I2C_Mem_Write(mpu->hi2c, MPU6050_ADDR, PWR_MGMT_1, 1, &data, 1, 100);
+
+    // Accel ±8g
+    data = 0x10;
+    HAL_I2C_Mem_Write(mpu->hi2c, MPU6050_ADDR, ACCEL_CONFIG, 1, &data, 1, 100);
+
+    // DLPF
+    data = 0x03;
+    HAL_I2C_Mem_Write(mpu->hi2c, MPU6050_ADDR, CONFIG, 1, &data, 1, 100);
+
+    mpu->state = STATE_IDLE;
+    mpu->filtered_angle = 0;
 }
 
 uint8_t Rec_Data[14];
 int16_t Accel_X_RAW, Accel_Y_RAW, Accel_Z_RAW;
 int16_t Gyro_X_RAW, Gyro_Y_RAW, Gyro_Z_RAW;
 
-void MPU6050_Read_Accel(void) {
+/*void MPU6050_Read_Accel(void) {
     HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 100);
 
     // Accelerometer Data
@@ -193,6 +246,18 @@ void MPU6050_Read_Accel(void) {
     Gyro_X_RAW  = (int16_t)(Rec_Data[8] << 8 | Rec_Data[9]);
     Gyro_Y_RAW  = (int16_t)(Rec_Data[10] << 8 | Rec_Data[11]);
     Gyro_Z_RAW  = (int16_t)(Rec_Data[12] << 8 | Rec_Data[13]);
+}*/
+
+void MPU6050_Read(MPU6050_t *mpu) {
+    HAL_I2C_Mem_Read(mpu->hi2c, MPU6050_ADDR, 0x3B, 1, mpu->Rec_Data, 14, 100);
+
+    mpu->Accel_X_RAW = (int16_t)(mpu->Rec_Data[0] << 8 | mpu->Rec_Data[1]);
+    mpu->Accel_Y_RAW = (int16_t)(mpu->Rec_Data[2] << 8 | mpu->Rec_Data[3]);
+    mpu->Accel_Z_RAW = (int16_t)(mpu->Rec_Data[4] << 8 | mpu->Rec_Data[5]);
+
+    mpu->Gyro_X_RAW  = (int16_t)(mpu->Rec_Data[8] << 8 | mpu->Rec_Data[9]);
+    mpu->Gyro_Y_RAW  = (int16_t)(mpu->Rec_Data[10] << 8 | mpu->Rec_Data[11]);
+    mpu->Gyro_Z_RAW  = (int16_t)(mpu->Rec_Data[12] << 8 | mpu->Rec_Data[13]);
 }
 
 void refresh_LCD() {
@@ -233,14 +298,9 @@ float EMA_Filter(int16_t sample, float last_filtered) {
     return (alpha * (float)sample) + ((1.0f - alpha) * last_filtered);
 }
 
-typedef enum { STATE_IDLE, STATE_TRIGGERED, STATE_COOLDOWN } HitState;
-HitState currentState = STATE_IDLE;
 
-#define HIT_THRESHOLD_HIGH 12000  // Spike needed to trigger
-#define HIT_THRESHOLD_LOW  8000  // Must fall below this to "reset"
-#define GYRO_HIT_MIN       1500   // Must be rotating "down" significantly
 
-bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
+/*bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
     uint32_t current_time = HAL_GetTick();
     bool hit = false;
 
@@ -275,6 +335,39 @@ bool DetectDrumHit_Advanced(int16_t accel_z, int16_t gyro_x) {
             break;
     }
     return hit;
+}*/
+
+bool DetectHit(MPU6050_t *mpu) {
+    uint32_t current_time = HAL_GetTick();
+    bool hit = false;
+
+    float accel = mpu->Accel_Z_RAW;
+    float gyro  = mpu->Gyro_X_RAW;
+
+    switch (mpu->state) {
+        case STATE_IDLE:
+            if (accel > HIT_THRESHOLD_HIGH && gyro > GYRO_HIT_MIN) {
+                hit = true;
+                mpu->last_hit_time = current_time;
+                mpu->state = STATE_TRIGGERED;
+            }
+            break;
+
+        case STATE_TRIGGERED:
+            if (current_time - mpu->last_hit_time > 40) {
+                mpu->state = STATE_COOLDOWN;
+            }
+            break;
+
+        case STATE_COOLDOWN:
+            if (accel < HIT_THRESHOLD_LOW ||
+                (current_time - mpu->last_hit_time > COOLDOWN_MS)) {
+                mpu->state = STATE_IDLE;
+            }
+            break;
+    }
+
+    return hit;
 }
 
 // Angle Tracking Variables
@@ -284,9 +377,10 @@ uint32_t last_loop_time = 0;    // For calculating dt (delta time)
 
 float gyro_x_offset = 0.0f;
 float gyro_z_offset = 0.0f;
-float strike_angle = 0.0f;
+float strike_angle_1 = 0.0f;
+float strike_angle_2 = 0.0f;
 
-void Calibrate_Gyro_Offset(void) {
+/*void Calibrate_Gyro_Offset(void) {
     int32_t x_sum = 0;
     int32_t z_sum = 0;
     LCD_DrawString(10, 140, "Calibrating Gyro...");
@@ -301,6 +395,51 @@ void Calibrate_Gyro_Offset(void) {
     gyro_x_offset = (float)x_sum / 10.0f;
     gyro_z_offset = (float)z_sum / 10.0f;
     LCD_DrawString(10, 140, "Calibration Done!  ");
+}*/
+
+void Calibrate_Gyro(MPU6050_t *mpu) {
+    int32_t sum = 0;
+
+    for (int i = 0; i < 10; i++) {
+        MPU6050_Read(mpu);
+        sum += mpu->Gyro_X_RAW;
+        HAL_Delay(2);
+    }
+
+    mpu->gyro_x_offset = (float)sum / 10.0f;
+    LCD_DrawString(10, 140, "Calibration Done!  ");
+}
+
+float MPU6050_UpdateAngle(MPU6050_t *mpu, float dt) {
+
+    // 1. Gyro rate (deg/s)
+    float gyro_rate = ((float)mpu->Gyro_X_RAW - mpu->gyro_x_offset) / 131.0f;
+
+    // 2. Accelerometer angle (deg)
+    float accel_angle = atan2f((float)mpu->Accel_Y_RAW,
+                               (float)mpu->Accel_Z_RAW) * 57.2958f;
+
+    // 3. Acc magnitude (for reliability check)
+    float accel_mag = sqrtf(
+        (float)mpu->Accel_X_RAW * mpu->Accel_X_RAW +
+        (float)mpu->Accel_Y_RAW * mpu->Accel_Y_RAW +
+        (float)mpu->Accel_Z_RAW * mpu->Accel_Z_RAW
+    );
+
+    // 4. Complementary filter
+    if (accel_mag > 3000.0f && accel_mag < 5500.0f) {
+        mpu->filtered_angle =
+            0.98f * (mpu->filtered_angle + gyro_rate * dt)
+          + 0.02f * accel_angle;
+    } else {
+        mpu->filtered_angle += gyro_rate * dt;
+    }
+
+    // 5. Clamp angle
+    if (mpu->filtered_angle > 90.0f) mpu->filtered_angle = 90.0f;
+    if (mpu->filtered_angle < -90.0f) mpu->filtered_angle = -90.0f;
+
+    return mpu->filtered_angle;
 }
 /* USER CODE END 0 */
 
@@ -339,17 +478,32 @@ int main(void)
   MX_SDIO_SD_Init();
   MX_TIM6_Init();
   MX_FATFS_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   LCD_INIT();
   LCD_Clear(0, 0, 240, 320, BLACK);
 
 
-  MPU6050_Init();
-  MPU6050_Read_Accel();
+//  MPU6050_Init();
+//  MPU6050_Read_Accel();
+//
+//  HAL_Delay(500);
+//
+//
+//	Calibrate_Gyro_Offset();
+  mpu1.hi2c = &hi2c2; // Stick 1
+  mpu2.hi2c = &hi2c1; // Stick 2
+
+  MPU6050_Init_Device(&mpu1);
+  MPU6050_Init_Device(&mpu2);
+
   HAL_Delay(500);
 
-  // Call calibration here!
-	Calibrate_Gyro_Offset();
+  Calibrate_Gyro(&mpu1);
+  Calibrate_Gyro(&mpu2);
+
+  mpu1.last_loop_time = HAL_GetTick();
+  mpu2.last_loop_time = HAL_GetTick();
 
 	// Initialize our timer
 	last_loop_time = HAL_GetTick();
@@ -365,6 +519,25 @@ int main(void)
 
 	HAL_Delay(500);
 
+	HAL_StatusTypeDef status1;
+	status1 = HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
+
+	if (status1 == HAL_OK) {
+		LCD_DrawString(10, 100, "I2C2 Connected!");
+	} else {
+		LCD_DrawString(10, 100, "I2C2 Not Connected!");
+	}
+
+	HAL_StatusTypeDef status2;
+	status2 = HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
+
+	if (status2 == HAL_OK) {
+		LCD_DrawString(10, 120, "I2C1 Connected!");
+	} else {
+		LCD_DrawString(10, 120, "I2C1 Not Connected!");
+	}
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -374,10 +547,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  HAL_StatusTypeDef status;
-	  status = HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
-
-	  if (status != HAL_OK) {
+	  status1 = HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
+	  if (status1 != HAL_OK) {
 	      // I2C failed! Reset the peripheral to "unstick" it
 	      HAL_I2C_DeInit(&hi2c2);
 	      HAL_I2C_Init(&hi2c2);
@@ -385,53 +556,89 @@ int main(void)
 	      continue; // Skip this loop iteration
 	  }
 
+	  status2 = HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
+	  if (status2 != HAL_OK) {
+		  // I2C failed! Reset the peripheral to "unstick" it
+		  HAL_I2C_DeInit(&hi2c1);
+		  HAL_I2C_Init(&hi2c1);
+		  // Optional: Re-run MPU6050_Init() if the sensor itself reset
+		  continue; // Skip this loop iteration
+	  }
+
 	  // 1. Calculate time elapsed since last loop (dt)
-		uint32_t current_time = HAL_GetTick();
-		float dt = (current_time - last_loop_time) / 1000.0f; // Convert ms to seconds
-		last_loop_time = current_time;
+//		uint32_t current_time = HAL_GetTick();
+//		float dt = (current_time - last_loop_time) / 1000.0f; // Convert ms to seconds
+//		last_loop_time = current_time;
 
 		// 2. Read fresh data
-		MPU6050_Read_Accel();
+//		MPU6050_Read_Accel();
+//
+//		/* 1. Gyro rate */
+//		float gyro_rate =
+//		((float)Gyro_X_RAW - gyro_x_offset)/131.0f;
+//
+//		/* 2. Accelerometer angle */
+//		float accel_angle =
+//		atan2f((float)Accel_Y_RAW,
+//		       (float)Accel_Z_RAW)
+//		       *57.2958f;
+//		float accel_mag = sqrtf((float)Accel_X_RAW * Accel_X_RAW
+//				+ (float)Accel_Y_RAW * Accel_Y_RAW
+//				+ Accel_Z_RAW * Accel_Z_RAW);
 
-		/* 1. Gyro rate */
-		float gyro_rate =
-		((float)Gyro_X_RAW - gyro_x_offset)/131.0f;
-
-		/* 2. Accelerometer angle */
-		float accel_angle =
-		atan2f((float)Accel_Y_RAW,
-		       (float)Accel_Z_RAW)
-		       *57.2958f;
-		float accel_mag = sqrtf((float)Accel_X_RAW * Accel_X_RAW
-				+ (float)Accel_Y_RAW * Accel_Y_RAW
-				+ Accel_Z_RAW * Accel_Z_RAW);
-
-		/* 3. Complementary filter */
-//		filtered_angle=
-//		0.98f*(filtered_angle+
-//		gyro_rate*dt)
-//		+0.02f*accel_angle;
 
 		// Only trust accelerometer when it looks like gravity, not impact.
-		if (accel_mag > 3000.0f && accel_mag < 5500.0f) {
-			filtered_angle = (0.98f * (filtered_angle + gyro_rate * dt) + 0.02f * accel_angle);
-		} else {
-			filtered_angle = filtered_angle + gyro_rate * dt;
-		}
+//		if (accel_mag > 3000.0f && accel_mag < 5500.0f) {
+//			filtered_angle = (0.98f * (filtered_angle + gyro_rate * dt) + 0.02f * accel_angle);
+//		} else {
+//			filtered_angle = filtered_angle + gyro_rate * dt;
+//		}
+//
+//		if (filtered_angle > 90.0f) filtered_angle = 90.0f;
+//		if (filtered_angle < -90.0f) filtered_angle = -90.0f;
 
-		if (filtered_angle > 90.0f) filtered_angle = 90.0f;
-		if (filtered_angle < -90.0f) filtered_angle = -90.0f;
+	  uint32_t now = HAL_GetTick();
+	  float dt1 = (now - mpu1.last_loop_time) / 1000.0f;
+	  mpu1.last_loop_time = now;
+	  float dt2 = (now - mpu2.last_loop_time) / 1000.0f;
+	  mpu2.last_loop_time = now;
 
-		if (DetectDrumHit_Advanced(Accel_Z_RAW, Gyro_X_RAW)) {
-			strike_angle = filtered_angle;
+		MPU6050_Read(&mpu1);
 
-			if(strike_angle < -35.0f)
+		MPU6050_Read(&mpu2);
+
+		strike_angle_1 = MPU6050_UpdateAngle(&mpu1, dt1);
+		strike_angle_2 = MPU6050_UpdateAngle(&mpu2, dt2);
+
+		if (DetectHit(&mpu1)) {
+
+			if(strike_angle_1 < -35.0f)
 			{
 				PlayDrum(&wavOverhead, 2);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			}
 
-			else if(strike_angle > 45.0f)
+			else if(strike_angle_1 > 45.0f)
+			{
+				PlayDrum(&wavSnare, 1);
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+			}
+
+			else
+			{
+				PlayDrum(&wavTom, 0);
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
+			}
+		}
+		if (DetectHit(&mpu2)) {
+
+			if(strike_angle_2 < -35.0f)
+			{
+				PlayDrum(&wavOverhead, 2);
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+			}
+
+			else if(strike_angle_2 > 45.0f)
 			{
 				PlayDrum(&wavSnare, 1);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
@@ -448,11 +655,14 @@ int main(void)
 
 
 		// 5. Non-blocking LED turn-off
+		HAL_Delay(10);
 		if (HAL_GetTick() - last_hit_time > 50) {
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 		}
+
+		/* Audio part --------------------------------------------------------*/
 	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
@@ -591,6 +801,40 @@ static void MX_DAC_Init(void)
   /* USER CODE BEGIN DAC_Init 2 */
 
   /* USER CODE END DAC_Init 2 */
+
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
 
