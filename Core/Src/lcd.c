@@ -373,65 +373,62 @@ void LCD_DrawLine ( uint16_t usC1, uint16_t usP1, uint16_t usC2, uint16_t usP2, 
 }   
 
 
-void LCD_DrawChar ( uint16_t usC, uint16_t usP, const char cChar )
+void LCD_DrawChar(uint16_t usC, uint16_t usP, const char cChar, uint16_t usColor)
 {
-	uint8_t ucTemp, ucRelativePositon, ucPage, ucColumn;
+    uint8_t ucTemp, ucPage, ucColumn, ucRelativePositon;
 
-	
-	ucRelativePositon = cChar - ' ';
-	
-	LCD_OpenWindow ( usC, usP, WIDTH_EN_CHAR, HEIGHT_EN_CHAR );
-	
-	LCD_Write_Cmd ( CMD_SetPixel );	
-	
-	for ( ucPage = 0; ucPage < HEIGHT_EN_CHAR; ucPage ++ )
-	{
-		ucTemp = ucAscii_1608 [ ucRelativePositon ] [ ucPage ];
-		
-		for ( ucColumn = 0; ucColumn < WIDTH_EN_CHAR; ucColumn ++ )
-		{
-			if ( ucTemp & 0x01 )
-				LCD_Write_Data ( 0xFFFF );	// changed foreground to white
-			
-			else
-				LCD_Write_Data (  0x0000 );	// changed background to balck
-			
-			ucTemp >>= 1;		
-			
-		}
-		
-	}
-	
+    // Calculate position in the font array
+    ucRelativePositon = cChar - ' ';
+
+    LCD_OpenWindow(usC, usP, WIDTH_EN_CHAR, HEIGHT_EN_CHAR);
+    LCD_Write_Cmd(CMD_SetPixel);
+
+    for (ucPage = 0; ucPage < HEIGHT_EN_CHAR; ucPage++)
+    {
+        ucTemp = ucAscii_1608[ucRelativePositon][ucPage];
+
+        for (ucColumn = 0; ucColumn < WIDTH_EN_CHAR; ucColumn++)
+        {
+            // If the bit is 1, draw the text color
+            if (ucTemp & 0x01)
+                LCD_Write_Data(usColor);
+
+            // If the bit is 0, draw the background (White)
+            else
+                LCD_Write_Data(0xFFFF);
+
+            ucTemp >>= 1;
+        }
+    }
 }
 
 
-
-
-void LCD_DrawString ( uint16_t usC, uint16_t usP, const char * pStr )
+void LCD_DrawString(uint16_t usC, uint16_t usP, const char * pStr, uint16_t usColor)
 {
-	while ( * pStr != '\0' )
-	{
-		if ( ( usC - LCD_DispWindow_Start_COLUMN + WIDTH_EN_CHAR ) > LCD_DispWindow_COLUMN )
-		{
-			usC = LCD_DispWindow_Start_COLUMN;
-			usP += HEIGHT_EN_CHAR;
-		}
-		
-		if ( ( usP - LCD_DispWindow_Start_PAGE + HEIGHT_EN_CHAR ) > LCD_DispWindow_PAGE )
-		{
-			usC = LCD_DispWindow_Start_COLUMN;
-			usP = LCD_DispWindow_Start_PAGE;
-		}
-		
-		LCD_DrawChar ( usC, usP, * pStr );
-		
-		pStr ++;
-		
-		usC += WIDTH_EN_CHAR;
-		
-	}
-	
+    while (*pStr != '\0')
+    {
+        // Handle screen boundary (Horizontal)
+        if ((usC - LCD_DispWindow_Start_COLUMN + WIDTH_EN_CHAR) > LCD_DispWindow_COLUMN)
+        {
+            usC = LCD_DispWindow_Start_COLUMN;
+            usP += HEIGHT_EN_CHAR;
+        }
+
+        // Handle screen boundary (Vertical)
+        if ((usP - LCD_DispWindow_Start_PAGE + HEIGHT_EN_CHAR) > LCD_DispWindow_PAGE)
+        {
+            usC = LCD_DispWindow_Start_COLUMN;
+            usP = LCD_DispWindow_Start_PAGE;
+        }
+
+        // Pass the chosen color to the character drawing function
+        LCD_DrawChar(usC, usP, *pStr, usColor);
+
+        pStr++;
+        usC += WIDTH_EN_CHAR;
+    }
 }
+
 
 
 //Task 2

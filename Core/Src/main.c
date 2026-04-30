@@ -37,7 +37,7 @@
 #define AUDIO_BUF_SIZE 4096  // Total size (Ping + Pong)
 #define HALF_BUF_SIZE (AUDIO_BUF_SIZE / 2)
 
-#define COOLDOWN_MS 120
+#define COOLDOWN_MS 200
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -75,6 +75,7 @@ AudioChannel channels[TOTAL_CHANNELS];
 
 // Persistent handles for drums
 FIL wavTom, wavSnare, wavOverhead;
+FIL wavTanggu, wavBangu, wavXiaoluo;
 // Dynamic handle for the song
 FIL wavSong;
 
@@ -84,6 +85,28 @@ volatile uint8_t transferStatus = 0;
 
 int PA0_previous = 0, PC13_previous = 0;
 int PA0_current, PC13_current;
+const char* songList[] = {"Mayoiuta", "Midnight", "Haruhikage", "Theyoung"};
+const char* drumList[] = {"Acoustic Kit", "Chinese Kit", "Electronic"};
+
+#define SONG_COUNT (sizeof(songList) / sizeof(songList[0]))
+#define DRUM_COUNT (sizeof(drumList) / sizeof(drumList[0]))
+#define HOME_COUNT 2
+
+// Page States
+typedef enum { PAGE_HOME, PAGE_SONG, PAGE_DRUM } MenuPage;
+MenuPage currentPage = PAGE_HOME;
+
+// Independent Indices
+uint8_t homeIdx = 0;
+uint8_t songIdx = 0;
+uint8_t drumIdx = 0;
+
+// Current Selections (Indices)
+int activeSongIdx = -1; // -1 means none
+int activeDrumIdx = 0;  // Default to first drum
+
+uint8_t updateDisplay = 1;
+uint32_t lastButtonTime = 0;
 
 uint32_t last_hit_time = 0;
 /* USER CODE END PV */
@@ -137,15 +160,51 @@ void PlaySong(char *filename) {
 }
 /* --- DMA Callback Functions --- */
 
-// Called when first half of audioBuffer is played
 void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
-    transferStatus = 1;
+    // We are now playing the second half; refill the FIRST half
+    FillAudioBuffer(0);
 }
 
-// Called when second half of audioBuffer is played
 void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef* hdac) {
-    transferStatus = 2;
-    // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+    // We are now playing the first half; refill the SECOND half
+    FillAudioBuffer(HALF_BUF_SIZE);
+    //HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1); // Visual heartbeat
+}
+void FillAudioBuffer(uint32_t offset) {
+    int32_t mixedSamples[HALF_BUF_SIZE] = {0};
+    uint8_t anyChannelActive = 0;
+
+    for (int ch = 0; ch < TOTAL_CHANNELS; ch++) {
+        if (channels[ch].active) {
+            anyChannelActive = 1;
+            UINT br;
+
+            if (channels[ch].rewind) {
+                f_lseek(channels[ch].fileHandle, 44);
+                channels[ch].rewind = 0;
+            }
+
+            // Read directly into the temporary buffer
+            if (f_read(channels[ch].fileHandle, channels[ch].tempBuf, HALF_BUF_SIZE * 2, &br) != FR_OK || br == 0) {
+                channels[ch].active = 0;
+                // DO NOT close files inside an interrupt.
+                // Set a flag and close them in the main loop if needed.
+            } else {
+                int16_t *pSamples = (int16_t*)channels[ch].tempBuf;
+                for (int i = 0; i < HALF_BUF_SIZE; i++) {
+                    mixedSamples[i] += pSamples[i];
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < HALF_BUF_SIZE; i++) {
+        // Clipping
+        if (mixedSamples[i] > 32767) mixedSamples[i] = 32767;
+        else if (mixedSamples[i] < -32768) mixedSamples[i] = -32768;
+
+        audioBuffer[offset + i] = (uint16_t)((mixedSamples[i] + 32768) >> 4);
+    }
 }
 /* USER CODE END PFP */
 
@@ -164,7 +223,7 @@ typedef enum { STATE_IDLE, STATE_TRIGGERED, STATE_COOLDOWN } HitState;
 HitState currentState = STATE_IDLE;
 
 #define HIT_THRESHOLD_HIGH 12000  // Spike needed to trigger
-#define HIT_THRESHOLD_LOW  8000  // Must fall below this to "reset"
+#define HIT_THRESHOLD_LOW  5000  // Must fall below this to "reset"
 #define GYRO_HIT_MIN       1500   // Must be rotating "down" significantly
 
 typedef struct {
@@ -262,31 +321,31 @@ void MPU6050_Read(MPU6050_t *mpu) {
 
 void refresh_LCD() {
 	// Labels for Accelerometer
-	LCD_DrawString(10, 0,  "Accel X: ");
-	LCD_DrawString(10, 20, "Accel Y: ");
-	LCD_DrawString(10, 40, "Accel Z: ");
+	LCD_DrawString(10, 0,  "Accel X: ", BLACK);
+	LCD_DrawString(10, 20, "Accel Y: ", BLACK);
+	LCD_DrawString(10, 40, "Accel Z: ", BLACK);
 
 	// Labels for Gyroscope
-	LCD_DrawString(10, 70, "Gyro X:  ");
-	LCD_DrawString(10, 90, "Gyro Y:  ");
-	LCD_DrawString(10, 110, "Gyro Z:  ");
+	LCD_DrawString(10, 70, "Gyro X:  ", BLACK);
+	LCD_DrawString(10, 90, "Gyro Y:  ", BLACK);
+	LCD_DrawString(10, 110, "Gyro Z:  ", BLACK);
 
 	// Display Accelerometer values
 	// Using %-6d ensures the number is left-aligned and padded with spaces up to 6 chars
 	sprintf(str, "%-6d", Accel_X_RAW);
-	LCD_DrawString(120, 0, str);
+	LCD_DrawString(120, 0, str, BLACK);
 	sprintf(str, "%-6d", Accel_Y_RAW);
-	LCD_DrawString(120, 20, str);
+	LCD_DrawString(120, 20, str, BLACK);
 	sprintf(str, "%-6d", Accel_Z_RAW);
-	LCD_DrawString(120, 40, str);
+	LCD_DrawString(120, 40, str, BLACK);
 
 	// Display Gyroscope values
 	sprintf(str, "%-6d", Gyro_X_RAW);
-	LCD_DrawString(120, 70, str);
+	LCD_DrawString(120, 70, str, BLACK);
 	sprintf(str, "%-6d", Gyro_Y_RAW);
-	LCD_DrawString(120, 90, str);
+	LCD_DrawString(120, 90, str, BLACK);
 	sprintf(str, "%-6d", Gyro_Z_RAW);
-	LCD_DrawString(120, 110, str);
+	LCD_DrawString(120, 110, str, BLACK);
 }
 
 // Detect hit
@@ -354,7 +413,7 @@ bool DetectHit(MPU6050_t *mpu) {
             break;
 
         case STATE_TRIGGERED:
-            if (current_time - mpu->last_hit_time > 40) {
+            if (current_time - mpu->last_hit_time > 80) {
                 mpu->state = STATE_COOLDOWN;
             }
             break;
@@ -407,7 +466,7 @@ void Calibrate_Gyro(MPU6050_t *mpu) {
     }
 
     mpu->gyro_x_offset = (float)sum / 10.0f;
-    LCD_DrawString(10, 140, "Calibration Done!  ");
+    //LCD_DrawString(10, 140, "Calibration Done!  ", BLACK);
 }
 
 float MPU6050_UpdateAngle(MPU6050_t *mpu, float dt) {
@@ -481,7 +540,7 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   LCD_INIT();
-  LCD_Clear(0, 0, 240, 320, BLACK);
+  //LCD_Clear(0, 0, 240, 320, BLACK);
 
 
 //  MPU6050_Init();
@@ -513,6 +572,9 @@ int main(void)
 	    f_open(&wavTom, "Tom.wav", FA_READ);
 	    f_open(&wavSnare, "Snare.wav", FA_READ);
 	    f_open(&wavOverhead, "Overhead.wav", FA_READ);
+	    f_open(&wavTanggu, "Tanggu.wav", FA_READ);
+	     f_open(&wavBangu, "Bangu.wav", FA_READ);
+	     f_open(&wavXiaoluo, "Xiaoluo.wav", FA_READ);
 
 	    PlayDrum(&wavTom, 0);
 	}
@@ -523,18 +585,18 @@ int main(void)
 	status1 = HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
 
 	if (status1 == HAL_OK) {
-		LCD_DrawString(10, 100, "I2C2 Connected!");
+		//LCD_DrawString(10, 100, "I2C2 Connected!", BLACK);
 	} else {
-		LCD_DrawString(10, 100, "I2C2 Not Connected!");
+		//LCD_DrawString(10, 100, "I2C2 Not Connected!", BLACK);
 	}
 
 	HAL_StatusTypeDef status2;
 	status2 = HAL_I2C_Mem_Read(&hi2c1, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
 
 	if (status2 == HAL_OK) {
-		LCD_DrawString(10, 120, "I2C1 Connected!");
+		//LCD_DrawString(10, 120, "I2C1 Connected!", BLACK);
 	} else {
-		LCD_DrawString(10, 120, "I2C1 Not Connected!");
+		//LCD_DrawString(10, 120, "I2C1 Not Connected!", BLACK);
 	}
 
 
@@ -544,14 +606,91 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
+	  	  	      PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+
+	  	  	      // --- PA0: Scroll Down (Page Specific) ---
+	  	  	 //if (HAL_GetTick() - lastButtonTime > 250) {
+	  	  	      if (PA0_previous == 0 && PA0_current == 1) {
+	  	  	          updateDisplay = 1;
+	  	  	          switch(currentPage) {
+	  	  	              case PAGE_HOME: homeIdx = (homeIdx + 1) % HOME_COUNT; break;
+	  	  	              case PAGE_SONG: songIdx = (songIdx + 1) % SONG_COUNT; break;
+	  	  	              case PAGE_DRUM: drumIdx = (drumIdx + 1) % DRUM_COUNT; break;
+	  	  	          }
+	  	  	          lastButtonTime = HAL_GetTick();
+	  	  	      }
+
+	  	  	      // --- PC13: Confirm (Page Specific) ---
+	  	  	      if (PC13_previous == 1 && PC13_current == 0) {
+	  	  	          updateDisplay = 1;
+	  	  	          if (currentPage == PAGE_HOME) {
+	  	  	              currentPage = (homeIdx == 0) ? PAGE_SONG : PAGE_DRUM;
+	  	  	          }
+	  	  	          else if (currentPage == PAGE_SONG) {
+	  	  	              activeSongIdx = songIdx;
+	  	  	              char fileName[20];
+	  	  	              sprintf(fileName, "%s.wav", songList[activeSongIdx]);
+	  	  	              PlaySong(fileName);
+	  	  	              currentPage = PAGE_HOME;
+	  	  	          }
+	  	  	          else if (currentPage == PAGE_DRUM) {
+	  	  	              activeDrumIdx = drumIdx;
+	  	  	          currentPage = PAGE_HOME;
+	  	  	              }
+
+	  	  	          }
+	  	  	          lastButtonTime = HAL_GetTick();
+  //}
+
+
+	  	  	      PA0_previous = PA0_current;
+	  	  	      PC13_previous = PC13_current;
+
+	  	  	      // --- 2. Render Screen ---
+	  	  	      if (updateDisplay) {
+	  	  	          LCD_Clear(0, 0, 240, 250, 0xFFFF);
+	  	  	          if (currentPage == PAGE_HOME) {
+	  	  	              LCD_DrawString(70, 20, "MAIN MENU", 0x0000);
+	  	  	              // Show Status
+	  	  	              char buf[30];
+	  	  	              sprintf(buf, "Current: %s", (activeSongIdx == -1) ? "None" : songList[activeSongIdx]);
+	  	  	              LCD_DrawString(20, 60, buf, 0x07E0); // Green color for status
+
+	  	  	              sprintf(buf, "Drum: %s", drumList[activeDrumIdx]);
+	  	  	              LCD_DrawString(20, 80, buf, 0x07E0);
+
+
+	  	  	              // Menu Options
+	  	  	              LCD_DrawString(30, 140, "[ SONG SELECT ]", (homeIdx == 0) ? RED : BLUE);
+	  	  	              LCD_DrawString(30, 170, "[ DRUM SELECT ]", (homeIdx == 1) ? RED : BLUE);
+	  	  	          }
+	  	  	          else if (currentPage == PAGE_SONG) {
+	  	  	              LCD_DrawString(70, 20, "SELECT SONG", 0x0000);
+	  	  	              for(int i = 0; i < SONG_COUNT; i++) {
+	  	  	                  LCD_DrawString(30, 60 + (i * 30), songList[i], (songIdx == i) ? RED : BLUE);
+
+	  	  	              }
+	  	  	          }
+	  	  	          else if (currentPage == PAGE_DRUM) {
+	  	  	              LCD_DrawString(70, 20, "SELECT DRUM", 0x0000);
+	  	  	              for(int i = 0; i < DRUM_COUNT; i++) {
+	  	  	                  LCD_DrawString(30, 60 + (i * 30), drumList[i], (drumIdx == i) ? RED : BLUE);
+
+	  	  	              }
+	  	  	          }
+	  	  	          updateDisplay = 0;
+	  	  	      }
 	  status1 = HAL_I2C_Mem_Read(&hi2c2, MPU6050_ADDR, 0x3B, 1, Rec_Data, 14, 10);
 	  if (status1 != HAL_OK) {
 	      // I2C failed! Reset the peripheral to "unstick" it
 	      HAL_I2C_DeInit(&hi2c2);
 	      HAL_I2C_Init(&hi2c2);
+
 	      // Optional: Re-run MPU6050_Init() if the sensor itself reset
 	      continue; // Skip this loop iteration
 	  }
@@ -561,6 +700,7 @@ int main(void)
 		  // I2C failed! Reset the peripheral to "unstick" it
 		  HAL_I2C_DeInit(&hi2c1);
 		  HAL_I2C_Init(&hi2c1);
+
 		  // Optional: Re-run MPU6050_Init() if the sensor itself reset
 		  continue; // Skip this loop iteration
 	  }
@@ -614,40 +754,78 @@ int main(void)
 
 			if(strike_angle_1 < -35.0f)
 			{
-				PlayDrum(&wavOverhead, 2);
-			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+				switch(activeDrumIdx){
+				case 0:	PlayDrum(&wavOverhead, 2);
+						break;
+				case 1:PlayDrum(&wavXiaoluo, 2);
+						break;
+				}
+				//PlayDrum(&wavOverhead, 2);
+
 			}
 
-			else if(strike_angle_1 > 45.0f)
+			else if(strike_angle_1 > 25.0f)
 			{
-				PlayDrum(&wavSnare, 1);
-			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+				switch(activeDrumIdx){
+								case 0:	PlayDrum(&wavSnare, 1);
+										break;
+								case 1:PlayDrum(&wavBangu, 1);
+										break;
+								}
+				//PlayDrum(&wavSnare, 1);
+
 			}
 
 			else
 			{
-				PlayDrum(&wavTom, 0);
+				//PlayDrum(&wavTom, 0);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
+			   switch(activeDrumIdx){
+			   								case 0:	PlayDrum(&wavTom, 0);
+			   										break;
+			   								case 1:PlayDrum(&wavTanggu, 0);
+			   										break;
+			   								}
 			}
 		}
 		if (DetectHit(&mpu2)) {
 
 			if(strike_angle_2 < -35.0f)
 			{
-				PlayDrum(&wavOverhead, 2);
+				//PlayDrum(&wavOverhead, 2);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+			   switch(activeDrumIdx){
+			   				case 0:	PlayDrum(&wavOverhead, 2);
+			   						break;
+			   				case 1:PlayDrum(&wavXiaoluo, 2);
+			   						break;
+			   				}
 			}
 
-			else if(strike_angle_2 > 45.0f)
+			else if(strike_angle_2 > 25.0f)
 			{
-				PlayDrum(&wavSnare, 1);
+				//PlayDrum(&wavSnare, 1);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+			   switch(activeDrumIdx){
+			   								case 0:	PlayDrum(&wavSnare, 1);
+			   										break;
+			   								case 1:PlayDrum(&wavBangu, 1);
+			   										break;
+			   								}
 			}
 
 			else
 			{
-				PlayDrum(&wavTom, 0);
+				//PlayDrum(&wavTom, 0);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
+			   switch(activeDrumIdx){
+			   			   								case 0:	PlayDrum(&wavTom, 0);
+			   			   										break;
+			   			   								case 1:PlayDrum(&wavTanggu, 0);
+			   			   										break;
+			   			   								}
 			}
 		}
 
@@ -663,6 +841,7 @@ int main(void)
 		}
 
 		/* Audio part --------------------------------------------------------*/
+/*
 	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
 	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
@@ -671,9 +850,9 @@ int main(void)
 
 	  PA0_previous = PA0_current;
 	  PC13_previous = PC13_current;
-
+*/
 	  	      // 2. Audio Mixing
-
+/*
 	  if (transferStatus > 0) {
 	      uint32_t offset = (transferStatus == 1) ? 0 : HALF_BUF_SIZE;
 	      transferStatus = 0;
@@ -721,7 +900,9 @@ int main(void)
 	      }
 	  }
   }
-
+  
+*/
+  }
   /* USER CODE END 3 */
 }
 
