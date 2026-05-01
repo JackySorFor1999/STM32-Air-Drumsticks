@@ -76,6 +76,7 @@ AudioChannel channels[TOTAL_CHANNELS];
 // Persistent handles for drums
 FIL wavTom, wavSnare, wavOverhead;
 FIL wavTanggu, wavBangu, wavXiaoluo;
+FIL wavEHit, wavESnare, wavEHigh;
 // Dynamic handle for the song
 FIL wavSong;
 
@@ -85,7 +86,7 @@ volatile uint8_t transferStatus = 0;
 
 int PA0_previous = 0, PC13_previous = 0;
 int PA0_current, PC13_current;
-const char* songList[] = {"Mayoiuta", "Midnight", "Haruhikage", "Theyoung"};
+const char* songList[] = {"Mayoiuta", "Midnight", "Haruhikage", "The Young Ones", "Golden","YOM"};
 const char* drumList[] = {"Acoustic Kit", "Chinese Kit", "Electronic"};
 
 #define SONG_COUNT (sizeof(songList) / sizeof(songList[0]))
@@ -540,7 +541,6 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   LCD_INIT();
-  //LCD_Clear(0, 0, 240, 320, BLACK);
 
 
 //  MPU6050_Init();
@@ -575,6 +575,9 @@ int main(void)
 	    f_open(&wavTanggu, "Tanggu.wav", FA_READ);
 	     f_open(&wavBangu, "Bangu.wav", FA_READ);
 	     f_open(&wavXiaoluo, "Xiaoluo.wav", FA_READ);
+	     f_open(&wavEHit, "EHit.wav", FA_READ);
+	     f_open(&wavESnare, "ESnare.wav", FA_READ);
+	     f_open(&wavEHigh, "EHigh.wav", FA_READ);
 
 	    PlayDrum(&wavTom, 0);
 	}
@@ -614,7 +617,7 @@ int main(void)
 	  	  	      PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
 	  	  	      // --- PA0: Scroll Down (Page Specific) ---
-	  	  	 //if (HAL_GetTick() - lastButtonTime > 250) {
+
 	  	  	      if (PA0_previous == 0 && PA0_current == 1) {
 	  	  	          updateDisplay = 1;
 	  	  	          switch(currentPage) {
@@ -633,9 +636,22 @@ int main(void)
 	  	  	          }
 	  	  	          else if (currentPage == PAGE_SONG) {
 	  	  	              activeSongIdx = songIdx;
-	  	  	              char fileName[20];
-	  	  	              sprintf(fileName, "%s.wav", songList[activeSongIdx]);
-	  	  	              PlaySong(fileName);
+	  	  	              switch (activeSongIdx){
+	  	  	              	  case 0: PlaySong("Mayoiuta.wav");
+	  	  	              	  	  	  break;
+	  	  	              	  case 1: PlaySong("Midnight.wav");
+	  	              	  	  	  	  break;
+	  	  	              	  case 2: PlaySong("Spring.wav");
+	  	              	  	  	  	  break;
+	  	  	              	  case 3:PlaySong("Young.wav");
+	  	              	  	  	  	  break;
+	  	  	              	  case 4:PlaySong("Golden.wav");
+	  	  	              	  	      break;
+	  	  	              	  case 5:PlaySong("YOM.wav");
+	  	  	              	  	      break;
+
+	  	  	              }
+
 	  	  	              currentPage = PAGE_HOME;
 	  	  	          }
 	  	  	          else if (currentPage == PAGE_DRUM) {
@@ -645,7 +661,6 @@ int main(void)
 
 	  	  	          }
 	  	  	          lastButtonTime = HAL_GetTick();
-  //}
 
 
 	  	  	      PA0_previous = PA0_current;
@@ -760,8 +775,9 @@ int main(void)
 						break;
 				case 1:PlayDrum(&wavXiaoluo, 2);
 						break;
+				case 2: PlayDrum(&wavEHigh, 2);
+						break;
 				}
-				//PlayDrum(&wavOverhead, 2);
 
 			}
 
@@ -773,19 +789,22 @@ int main(void)
 										break;
 								case 1:PlayDrum(&wavBangu, 1);
 										break;
+								case 2: PlayDrum(&wavESnare, 1);
+										break;
+
 								}
-				//PlayDrum(&wavSnare, 1);
 
 			}
 
 			else
 			{
-				//PlayDrum(&wavTom, 0);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
 			   switch(activeDrumIdx){
 			   								case 0:	PlayDrum(&wavTom, 0);
 			   										break;
 			   								case 1:PlayDrum(&wavTanggu, 0);
+			   										break;
+			   								case 2: PlayDrum(&wavEHit, 0);
 			   										break;
 			   								}
 			}
@@ -794,36 +813,39 @@ int main(void)
 
 			if(strike_angle_2 < -35.0f)
 			{
-				//PlayDrum(&wavOverhead, 2);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			   switch(activeDrumIdx){
 			   				case 0:	PlayDrum(&wavOverhead, 2);
 			   						break;
 			   				case 1:PlayDrum(&wavXiaoluo, 2);
 			   						break;
+			   				case 2: PlayDrum(&wavEHigh, 2);
+			   						break;
 			   				}
 			}
 
 			else if(strike_angle_2 > 25.0f)
 			{
-				//PlayDrum(&wavSnare, 1);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
 			   switch(activeDrumIdx){
 			   								case 0:	PlayDrum(&wavSnare, 1);
 			   										break;
 			   								case 1:PlayDrum(&wavBangu, 1);
 			   										break;
+			   								case 2: PlayDrum(&wavESnare, 1);
+			   										break;
 			   								}
 			}
 
 			else
 			{
-				//PlayDrum(&wavTom, 0);
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
 			   switch(activeDrumIdx){
 			   			   								case 0:	PlayDrum(&wavTom, 0);
 			   			   										break;
 			   			   								case 1:PlayDrum(&wavTanggu, 0);
+			   			   										break;
+			   			   							case 2: PlayDrum(&wavEHit, 0);
 			   			   										break;
 			   			   								}
 			}
@@ -840,68 +862,7 @@ int main(void)
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 		}
 
-		/* Audio part --------------------------------------------------------*/
-/*
-	  PA0_current = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0);
-	  PC13_current = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
-	  if (PA0_previous == 0 && PA0_current == 1) PlaySong("midnight.wav");
-	  if (PC13_previous == 0 && PC13_current == 1) PlaySong("Song.wav");
-
-	  PA0_previous = PA0_current;
-	  PC13_previous = PC13_current;
-*/
-	  	      // 2. Audio Mixing
-/*
-	  if (transferStatus > 0) {
-	      uint32_t offset = (transferStatus == 1) ? 0 : HALF_BUF_SIZE;
-	      transferStatus = 0;
-
-	      int32_t mixedSamples[HALF_BUF_SIZE] = {0};
-	      uint8_t anyChannelActive = 0;
-
-	      for (int ch = 0; ch < TOTAL_CHANNELS; ch++) {
-	          if (channels[ch].active) {
-	              anyChannelActive = 1;
-	              UINT br;
-	              if (channels[ch].rewind) {
-	                              f_lseek(channels[ch].fileHandle, 44);
-	                              channels[ch].rewind = 0;
-	                   }
-	              // 1. Read the WHOLE HALF_BUF_SIZE at once from the file handle
-	              // We use tempBuf for drums or a local buffer for the song
-	              if (f_read(channels[ch].fileHandle, channels[ch].tempBuf, HALF_BUF_SIZE * 2, &br) != FR_OK || br == 0) {
-	                  channels[ch].active = 0;
-	                  // If it's the song channel, we close it, otherwise leave drums open
-	                  if (ch == SONG_CHANNEL) f_close(&wavSong);
-	              } else {
-	                  // 2. Mix into the 32-bit buffer
-	                  int16_t *pSamples = (int16_t*)channels[ch].tempBuf;
-	                  for (int i = 0; i < HALF_BUF_SIZE; i++) {
-	                      mixedSamples[i] += pSamples[i];
-	                  }
-	              }
-	          }
-	      }
-
-	      // 3. Final Conversion and Clipping
-	      for (int i = 0; i < HALF_BUF_SIZE; i++) {
-	          if (mixedSamples[i] > 32767) mixedSamples[i] = 32767;
-	          else if (mixedSamples[i] < -32768) mixedSamples[i] = -32768;
-
-	          // Convert to 12-bit unsigned for DAC
-	          audioBuffer[offset + i] = (uint16_t)((mixedSamples[i] + 32768) >> 4);
-	      }
-
-	      if (!anyChannelActive) {
-	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
-	          HAL_TIM_Base_Stop(&htim6);
-	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, 2048);
-	      }
-	  }
-  }
-  
-*/
   }
   /* USER CODE END 3 */
 }
