@@ -766,39 +766,66 @@ int main(void)
 		strike_angle_2 = MPU6050_UpdateAngle(&mpu2, dt2);
 
 		if (DetectHit(&mpu1)) {
-
+			last_hit_time = HAL_GetTick();
 			if(strike_angle_1 < -35.0f)
 			{
-				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
-				switch(activeDrumIdx){
-				case 0:	PlayDrum(&wavOverhead, 2);
-						break;
-				case 1:PlayDrum(&wavXiaoluo, 2);
-						break;
-				case 2: PlayDrum(&wavEHigh, 2);
-						break;
-				}
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+								HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+								switch(activeDrumIdx){
+												case 0:	PlayDrum(&wavSnare, 1);
+														break;
+												case 1:PlayDrum(&wavBangu, 1);
+														break;
+												case 2: PlayDrum(&wavESnare, 1);
+														break;
+
+												}
+//				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+//				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+//				switch(activeDrumIdx){
+//				case 0:	PlayDrum(&wavOverhead, 2);
+//						break;
+//				case 1:PlayDrum(&wavXiaoluo, 2);
+//						break;
+//				case 2: PlayDrum(&wavEHigh, 2);
+//						break;
+//				}
+
 
 			}
 
 			else if(strike_angle_1 > 25.0f)
 			{
-				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
-				switch(activeDrumIdx){
-								case 0:	PlayDrum(&wavSnare, 1);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+								HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+								switch(activeDrumIdx){
+								case 0:	PlayDrum(&wavOverhead, 2);
 										break;
-								case 1:PlayDrum(&wavBangu, 1);
+								case 1:PlayDrum(&wavXiaoluo, 2);
 										break;
-								case 2: PlayDrum(&wavESnare, 1);
+								case 2: PlayDrum(&wavEHigh, 2);
 										break;
-
 								}
+//				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+//				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+//				switch(activeDrumIdx){
+//								case 0:	PlayDrum(&wavSnare, 1);
+//										break;
+//								case 1:PlayDrum(&wavBangu, 1);
+//										break;
+//								case 2: PlayDrum(&wavESnare, 1);
+//										break;
+//
+//								}
+
+
 
 			}
 
 			else
 			{
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
+			   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
 			   switch(activeDrumIdx){
 			   								case 0:	PlayDrum(&wavTom, 0);
 			   										break;
@@ -807,13 +834,15 @@ int main(void)
 			   								case 2: PlayDrum(&wavEHit, 0);
 			   										break;
 			   								}
+
 			}
 		}
 		if (DetectHit(&mpu2)) {
-
+			last_hit_time = HAL_GetTick();
 			if(strike_angle_2 < -35.0f)
 			{
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
 			   switch(activeDrumIdx){
 			   				case 0:	PlayDrum(&wavOverhead, 2);
 			   						break;
@@ -822,11 +851,13 @@ int main(void)
 			   				case 2: PlayDrum(&wavEHigh, 2);
 			   						break;
 			   				}
+
 			}
 
 			else if(strike_angle_2 > 25.0f)
 			{
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
 			   switch(activeDrumIdx){
 			   								case 0:	PlayDrum(&wavSnare, 1);
 			   										break;
@@ -835,11 +866,13 @@ int main(void)
 			   								case 2: PlayDrum(&wavESnare, 1);
 			   										break;
 			   								}
+
 			}
 
 			else
 			{
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);	// Blue
+			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
 			   switch(activeDrumIdx){
 			   			   								case 0:	PlayDrum(&wavTom, 0);
 			   			   										break;
@@ -848,6 +881,7 @@ int main(void)
 			   			   							case 2: PlayDrum(&wavEHit, 0);
 			   			   										break;
 			   			   								}
+
 			}
 		}
 
@@ -861,6 +895,10 @@ int main(void)
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
 		}
+		if (HAL_GetTick() - last_hit_time > 200) {
+					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+				}
 
 
   }
@@ -1116,10 +1154,13 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_5, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1|GPIO_PIN_13, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);
@@ -1136,8 +1177,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB0 PB1 PB5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_5;
+  /*Configure GPIO pins : PB0 PB1 PB13 PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_13|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
@@ -1149,6 +1190,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PC6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PE1 */
   GPIO_InitStruct.Pin = GPIO_PIN_1;
