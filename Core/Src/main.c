@@ -470,6 +470,9 @@ void Calibrate_Gyro(MPU6050_t *mpu) {
     //LCD_DrawString(10, 140, "Calibration Done!  ", BLACK);
 }
 
+float right_angle = -35.0f;
+float left_angle = 25.0f;
+
 float MPU6050_UpdateAngle(MPU6050_t *mpu, float dt) {
 
     // 1. Gyro rate (deg/s)
@@ -489,8 +492,8 @@ float MPU6050_UpdateAngle(MPU6050_t *mpu, float dt) {
     // 4. Complementary filter
     if (accel_mag > 3000.0f && accel_mag < 5500.0f) {
         mpu->filtered_angle =
-            0.98f * (mpu->filtered_angle + gyro_rate * dt)
-          + 0.02f * accel_angle;
+            0.95f * (mpu->filtered_angle + gyro_rate * dt)
+          + 0.05f * accel_angle;
     } else {
         mpu->filtered_angle += gyro_rate * dt;
     }
@@ -767,7 +770,7 @@ int main(void)
 
 		if (DetectHit(&mpu1)) {
 			last_hit_time = HAL_GetTick();
-			if(strike_angle_1 < -35.0f)
+			if(strike_angle_1 < right_angle)
 			{
 				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
 								HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
@@ -794,7 +797,7 @@ int main(void)
 
 			}
 
-			else if(strike_angle_1 > 25.0f)
+			else if(strike_angle_1 > left_angle)
 			{
 				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 								HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
@@ -839,7 +842,7 @@ int main(void)
 		}
 		if (DetectHit(&mpu2)) {
 			last_hit_time = HAL_GetTick();
-			if(strike_angle_2 < -35.0f)
+			if(strike_angle_2 < right_angle)
 			{
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);	// Red
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
@@ -854,7 +857,7 @@ int main(void)
 
 			}
 
-			else if(strike_angle_2 > 25.0f)
+			else if(strike_angle_2 > left_angle)
 			{
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);	// Green
 			   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
