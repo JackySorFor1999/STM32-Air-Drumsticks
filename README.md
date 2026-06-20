@@ -19,7 +19,7 @@ An embedded, motion-tracking virtual air drum kit developed for the **STM32F103V
 
 ## 📷 Hardware Setup
 
-![STM32 Air Drumsticks Hardware Prototype](assets/hardware_prototype.jpg)
+![STM32 Air Drumsticks Hardware Prototype](hardware_prototype.jpg)
 
 ## 📁 Repository Structure
 
